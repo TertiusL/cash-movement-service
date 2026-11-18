@@ -167,23 +167,7 @@ public sealed class StatementRpcTests : IClassFixture<SqlServerFixture>
             await RecordAsync(accountId, "AT-LIMIT", movementAmount, StartUtc.AddTicks(1), "BHD");
         }
         ExportStatementRequest period = Period(accountId, StartUtc, EndUtc);
-        await fixture.WithReaderProbeAsync((command, _) =>
-        {
-            // Only replace the input to the SQL opening SUM. Keep its range/scale conversion and the real row query.
-            const string movementSource = "dbo.Movements AS m";
-            if (command.CommandText.Contains(movementSource, StringComparison.Ordinal))
-            {
-                const string syntheticSource = """
-                    (VALUES (@testAccount, CAST(@testOpening AS decimal(38,4)), CAST('2000-01-01' AS datetime2(7))))
-                    AS m(AccountId, Amount, OccurredAtUtc)
-                    """;
-                command.CommandText = command.CommandText.Replace(movementSource, syntheticSource, StringComparison.Ordinal);
-                SqlParameterCollection parameters = ((SqlCommand)command).Parameters;
-                parameters.Add("@testAccount", SqlDbType.NVarChar, 64).Value = accountId;
-                parameters.Add("@testOpening", SqlDbType.VarChar, 40).Value = openingAmount;
-            }
-            return Task.CompletedTask;
-        }, async () =>
+        await fixture.WithSyntheticOpeningAsync(accountId, openingAmount, async () =>
         {
             using AsyncServerStreamingCall<StatementFrame> call = Export(period);
             if (lastReportableBalance is not null)

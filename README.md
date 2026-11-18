@@ -19,6 +19,7 @@ dotnet build CashMovements.sln --no-restore -c Release -m:1
 | UseCases | Validates inputs and exposes typed submission, balance and statement results. |
 | Infrastructure | EF Core mappings, atomic recording and duplicate recovery, SQL aggregates and snapshot-based statement reads. |
 | Grpc | HTTP/2 host, protobuf mapping, incremental statement writes, typed error trailers and correlated outcome logs. |
+| StatementClient | Reads the statement RPC one frame at a time and writes a local CSV with progress and Ctrl+C support. |
 | UnitTests / IntegrationTests | Domain boundary cases and generated-client gRPC calls against a migrated SQL Server database. |
 
 ## Start and initialise Docker SQL Server
@@ -80,6 +81,44 @@ To run only the statement checks after building and setting `CASHMOVEMENTS_TEST_
 ```powershell
 dotnet test tests/CashMovements.IntegrationTests --no-build -c Release --filter 'FullyQualifiedName~Statement'
 ```
+
+## Export a statement to CSV
+
+From the repository root, use the PowerShell session where you set the SQL password and connection string. Load the demo fixture, trust the local ASP.NET development certificate, and start the Release host. If the host is already running, keep it running and load the fixture in a session with the same Compose settings.
+
+```powershell
+docker compose run --rm db-init large-demo
+dotnet dev-certs https --trust
+dotnet run --no-build -c Release --project src/CashMovements.Grpc --launch-profile CashMovements.Grpc
+```
+
+In **a second PowerShell terminal**, start in the repository root. The client needs only the gRPC endpoint. The following command writes to `exports\july.csv` under the current directory.
+
+```powershell
+New-Item -ItemType Directory -Force -Path .\exports | Out-Null
+dotnet run --no-build -c Release --project src/CashMovements.StatementClient -- --endpoint https://localhost:5001 --account ACC-DEMO --from 2024-07-01T00:00:00Z --to 2024-08-01T00:00:00Z --output .\exports\july.csv
+if ($LASTEXITCODE -eq 0) { Get-Item .\exports\july.csv | Select-Object FullName, Length }
+```
+
+The client reports movement counts and elapsed time on stderr. July should show **50,001 movements**, opening `100.00`, first movement `DEMO-1` for `-1.00` with running balance `99.00`, and closing `100.50`. Use August to see an empty period with that closing carried forward.
+
+```powershell
+dotnet run --no-build -c Release --project src/CashMovements.StatementClient -- --endpoint https://localhost:5001 --account ACC-DEMO --from 2024-08-01T00:00:00Z --to 2024-09-01T00:00:00Z --output .\exports\august.csv
+if ($LASTEXITCODE -eq 0) { Get-Content .\exports\august.csv }
+```
+
+The CSV columns are `recordType,accountId,externalRef,currency,amount,occurredAt,narration,runningBalance`. The `opening` and `closing` records use only account, currency and running balance. Each `movement` contains the six recorded fields and its running balance. August has an opening and closing of `100.50` with no movement records. The file uses UTF-8 and CRLF. Commas, quotes and embedded line breaks in narration are escaped, so use a CSV parser to count logical records. Request bounds require an explicit UTC designator or offset. The start is inclusive and the end is exclusive.
+
+Press **Ctrl+C** during an export to cancel. While writing, the client uses a unique sibling such as `july.csv.<run-id>.partial`. After an interruption or failure, it reports the partial path if a file was created. To find these files, run `Get-ChildItem .\exports -Filter '*.partial'`. Only a successful stream, file close and rename produce the completed filename and success message. A retry starts a new snapshot. Choose a fresh output name if the intended destination already exists.
+
+PowerShell exposes the client's process exit code in `$LASTEXITCODE`. The names come from [ClientExitCodes.cs](src/CashMovements.StatementClient/ClientExitCodes.cs).
+
+| Exit code | Constant | Meaning |
+|---:|---|---|
+| `0` | `Success` | The stream completed and the client published the CSV at the requested path. |
+| `1` | `ExportFailure` | The export failed, for example during the gRPC call, a file write or the final rename. |
+| `2` | `InvalidArguments` | The client rejected the command-line arguments before starting the export. |
+| `130` | `Cancelled` | The caller cancelled the export, for example with Ctrl+C. |
 
 ## Inspect the database
 

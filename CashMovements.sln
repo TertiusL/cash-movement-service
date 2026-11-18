@@ -19,6 +19,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CashMovements.Grpc", "src\C
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CashMovements.Domain", "src\CashMovements.Domain\CashMovements.Domain.csproj", "{73D28E4C-FDAE-454B-A0CF-28029DFD0886}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CashMovements.StatementClient", "src\CashMovements.StatementClient\CashMovements.StatementClient.csproj", "{1BF2CA18-A623-4538-9D74-3B01C23B69CE}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -52,6 +54,10 @@ Global
 		{73D28E4C-FDAE-454B-A0CF-28029DFD0886}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{73D28E4C-FDAE-454B-A0CF-28029DFD0886}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{73D28E4C-FDAE-454B-A0CF-28029DFD0886}.Release|Any CPU.Build.0 = Release|Any CPU
+		{1BF2CA18-A623-4538-9D74-3B01C23B69CE}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{1BF2CA18-A623-4538-9D74-3B01C23B69CE}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{1BF2CA18-A623-4538-9D74-3B01C23B69CE}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{1BF2CA18-A623-4538-9D74-3B01C23B69CE}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{D7B9EEB0-5C1A-4B49-B1DA-F7C8BBDAD1CA} = {BF1EEF3F-829A-42E2-81B7-56D3CA0F7832}
@@ -60,5 +66,6 @@ Global
 		{D31A9650-AEB1-44FF-BC71-F779A8DC39BC} = {38D3C370-894D-4CB4-8CE8-96A6BC1CBD77}
 		{FCE00B1E-0F41-46B4-808B-8A1D6868F155} = {38D3C370-894D-4CB4-8CE8-96A6BC1CBD77}
 		{73D28E4C-FDAE-454B-A0CF-28029DFD0886} = {38D3C370-894D-4CB4-8CE8-96A6BC1CBD77}
+		{1BF2CA18-A623-4538-9D74-3B01C23B69CE} = {38D3C370-894D-4CB4-8CE8-96A6BC1CBD77}
 	EndGlobalSection
 EndGlobal

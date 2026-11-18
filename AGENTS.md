@@ -73,6 +73,7 @@ global using CashMovements.Domain;
 - Use PascalCase for types, methods and public properties, and camelCase for parameters and local variables. Retain a consistent existing private-field prefix convention where present.
 - Standard domain/technology terms such as Id, UTC, SQL, gRPC and DbContext need not be awkwardly expanded. Avoid unfamiliar or invented abbreviations.
 - Preserve externally defined names, generated names and agreed contract fields such as protobuf `external_ref`. This naming convention does not authorise a breaking contract or database schema change.
+- Use descriptive constants or enum members for values that represent named outcomes, limits or policies. Keep ordinary numeric literals inline when their meaning is clear, such as zero for an initial count.
 
 ## Use explicit variable types
 

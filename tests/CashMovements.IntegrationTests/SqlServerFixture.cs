@@ -10,7 +10,9 @@ public sealed class SqlServerFixture : IAsyncLifetime
     private WebApplication? host;
     private GrpcChannel? channel;
     internal LedgerClient Client { get; private set; } = null!;
+    internal string Endpoint { get; private set; } = null!;
     internal TestLogProvider Logs { get; } = new();
+    internal StatementCommitFault CommitFault { get; } = new();
 
     public async Task InitializeAsync()
     {
@@ -37,11 +39,13 @@ public sealed class SqlServerFixture : IAsyncLifetime
             hostBuilder.Logging.AddProvider(Logs);
             hostBuilder.Logging.AddFilter<TestLogProvider>(typeof(RpcOutcomeInterceptor).FullName, LogLevel.Debug);
             hostBuilder.Services.AddSingleton<IInterceptor>(probe);
+            hostBuilder.Services.AddSingleton<IInterceptor>(CommitFault);
             hostBuilder.WebHost.ConfigureKestrel(server =>
                 server.Listen(IPAddress.Loopback, 0, listener => listener.Protocols = HttpProtocols.Http2));
             host = Program.BuildApp(hostBuilder);
             await host.StartAsync();
-            channel = GrpcChannel.ForAddress(host.Urls.Single());
+            Endpoint = host.Urls.Single();
+            channel = GrpcChannel.ForAddress(Endpoint);
             Client = new LedgerClient(channel);
         }
         catch
@@ -77,6 +81,41 @@ public sealed class SqlServerFixture : IAsyncLifetime
     internal SqlConnection CreateConnection()
     {
         return new SqlConnection(testConnectionString);
+    }
+
+    internal async Task LoadLargeDemoAsync()
+    {
+        string script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "db", "large-demo.sql"));
+        await using SqlConnection connection = CreateConnection();
+        await connection.OpenAsync();
+        foreach (string batch in Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
+        {
+            if (string.IsNullOrWhiteSpace(batch))
+                continue;
+            using SqlCommand command = new(batch, connection);
+            await command.ExecuteNonQueryAsync();
+        }
+    }
+
+    internal Task WithSyntheticOpeningAsync(string accountId, string openingAmount, Func<Task> runTest)
+    {
+        return WithReaderProbeAsync((command, _) =>
+        {
+            // Replace only the input to the opening SUM. SQL still applies its production range/scale checks.
+            const string movementSource = "dbo.Movements AS m";
+            if (command.CommandText.Contains(movementSource, StringComparison.Ordinal))
+            {
+                const string syntheticSource = """
+                    (VALUES (@testAccount, CAST(@testOpening AS decimal(38,4)), CAST('2000-01-01' AS datetime2(7))))
+                    AS m(AccountId, Amount, OccurredAtUtc)
+                    """;
+                command.CommandText = command.CommandText.Replace(movementSource, syntheticSource, StringComparison.Ordinal);
+                SqlParameterCollection parameters = ((SqlCommand)command).Parameters;
+                parameters.Add("@testAccount", SqlDbType.NVarChar, 64).Value = accountId;
+                parameters.Add("@testOpening", SqlDbType.VarChar, 40).Value = openingAmount;
+            }
+            return Task.CompletedTask;
+        }, runTest);
     }
 
     internal async Task<string> CreateAccountAsync(string currency = "ZAR")

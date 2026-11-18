@@ -16,7 +16,7 @@ public sealed class StatementStreamingTests : IClassFixture<SqlServerFixture>
     [Fact]
     public async Task GeneratedClientConsumesSmallAndLargeStatementsIncrementally()
     {
-        await LoadDemoAsync();
+        await fixture.LoadLargeDemoAsync();
         foreach (int expectedCount in new[] { 1_000, JulyMovementCount })
         {
             int rowQueries = 0;
@@ -78,7 +78,7 @@ public sealed class StatementStreamingTests : IClassFixture<SqlServerFixture>
     [Fact]
     public async Task CancellingAfterMovementRowsReleasesTheActiveReaderAndSnapshot()
     {
-        await LoadDemoAsync();
+        await fixture.LoadLargeDemoAsync();
         TimeSpan timeout = TimeSpan.FromSeconds(30);
         TaskCompletionSource<SqlTransaction> activeTransaction = new(TaskCreationOptions.RunContinuationsAsynchronously);
         TaskCompletionSource<(DbDataReader Reader, int ReadCount)> disposingReader = new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -147,20 +147,6 @@ public sealed class StatementStreamingTests : IClassFixture<SqlServerFixture>
             AccountId = "acc-demo", FromInclusive = Timestamp.FromDateTime(JulyStart),
             ToExclusive = Timestamp.FromDateTime(toExclusive)
         };
-    }
-
-    private async Task LoadDemoAsync()
-    {
-        string script = await File.ReadAllTextAsync(Path.Combine(AppContext.BaseDirectory, "db", "large-demo.sql"));
-        await using SqlConnection connection = fixture.CreateConnection();
-        await connection.OpenAsync();
-        foreach (string batch in Regex.Split(script, @"^\s*GO\s*$", RegexOptions.Multiline | RegexOptions.IgnoreCase))
-        {
-            if (string.IsNullOrWhiteSpace(batch))
-                continue;
-            using SqlCommand command = new(batch, connection);
-            await command.ExecuteNonQueryAsync();
-        }
     }
 
     private async Task ReportActualPlanAsync(SqlCommand rowQuery, int expectedCount)

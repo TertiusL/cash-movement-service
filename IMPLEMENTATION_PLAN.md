@@ -1,6 +1,6 @@
 # Cash Movements Service — approved implementation plan
 
-**Status.** The candidate approved the revised plan and its defaults on 18 November 2026. Steps 1–4 are complete. Statement streaming is ready for review. The console CSV client is step 5. [Foundation verification](PLANNING.md#foundation-verification) · [Step 3 verification](PLANNING.md#step-3-verification) · [Step 4 verification](PLANNING.md#step-4-verification)
+**Status.** The candidate approved the revised plan and its defaults on 18 November 2026. Steps 1–4 have been reviewed. Step 5, the console CSV client, is implemented and verified for review. Step 6 is the handoff rehearsal and narrated demo. [Foundation verification](PLANNING.md#foundation-verification) · [Step 3 verification](PLANNING.md#step-3-verification) · [Step 4 verification](PLANNING.md#step-4-verification) · [Step 5 verification](PLANNING.md#step-5-verification)
 
 ## 1. Agreed scope and business rules
 
@@ -140,7 +140,7 @@ Cancel after several records, simulate a stream that fails after its final data 
 
 | Assessment requirement | Planned implementation and acceptance evidence |
 |---|---|
-| ☑ C#/.NET 8 modern service using gRPC and protobuf | Built the six-project solution and exercised all three RPCs through the generated client over real HTTP/2. |
+| ☑ C#/.NET 8 modern service using gRPC and protobuf | Built the Release solution, exercised all three RPCs through the generated client over real HTTP/2, and added the standalone console client as a seventh project in step 5. |
 | ☑ SQL Server persistence, keys, schema and seed scripts | Verified in step 2 against a clean Docker database, including reruns with existing data and an independent EF migration comparison. |
 | ☑ Six movement fields, record a movement, retrieve current balance as a sum | Verified canonical replies against all six SQL fields, signed sums, empty and unknown accounts, and totals wider than a movement. |
 | ☑ Per-account uniqueness, concurrent callers and differing duplicate fields | Verified both kinds of contested inserts on distinct SQL connections, changes to each recorded field, and reference reuse across accounts. |

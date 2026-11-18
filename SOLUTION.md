@@ -1,6 +1,6 @@
 # Cash Movements Service
 
-**Step 4 checkpoint.** The service implements movement submission, current balances and streaming statements through gRPC against SQL Server in Docker. [Local setup](README.md) · [Statement verification](PLANNING.md#step-4-verification)
+**Step 5 checkpoint.** The service implements movement submission, current balances and streaming statements against SQL Server in Docker. The console client consumes the statement RPC to produce a local CSV. [Run the client](README.md#export-a-statement-to-csv) · [Export verification](PLANNING.md#step-5-verification)
 
 ## Design decisions agreed during planning
 
@@ -48,7 +48,9 @@ If B's submission fails or its response is lost, the caller can resubmit B's ori
 
 **Structured logging.** Use the standard .NET logging abstraction with structured properties for the operation, outcome and trace or correlation ID. The correlation ID connects events from one call across layers. Log routine outcomes at informational or debug level. An identical retry is an expected success. A conflicting submission is a business outcome and can warrant a warning. Log an unexpected failure once at the server boundary, where the call context is available. Keep diagnostic exception details on the server and send a safe error to the caller. Treat cancellation attributable to the client as an expected termination. Routine logs omit request bodies, narration, amounts and credentials.
 
-**Selected console extension.** After the required service functionality, a small console client will stream the existing statement RPC to a local CSV with progress and cancellation. The caller's machine owns the output file. The client publishes a completed file after the RPC succeeds and local writes finish. The [client design and CSV balance rules](IMPLEMENTATION_PLAN.md#console-client-and-local-csv) cover partial files and empty ranges.
+**Selected console extension.** The client generates its own RPC stub from the service's versioned protobuf and needs only the endpoint address. The caller selects a destination on their own machine. Each awaited stream read produces one CSV record. The client copies canonical decimal strings and the supplied balances, preserving currency precision, and renders timestamps in UTC with seven fractional digits. It retains the header, the most recent balance, a count and the current record. File and transport buffers can each hold a bounded amount of data. [CSV layout and balance rules](IMPLEMENTATION_PLAN.md#console-client-and-local-csv)
+
+**File publication.** The client exclusively creates a unique `.partial` file beside the destination. Ctrl+C cancels the RPC and pending writes. A successful end-of-stream authorises the closing record. After flushing and closing the file, the client renames it within the same directory, refusing to overwrite an existing file, then reports success. A competing writer can take the destination just before the rename. In that case even a fully written CSV with a closing record keeps its partial name, and the client reports failure. Use the successful exit and completed filename as the publication signal. A retry starts a new file and a new snapshot. [Failure and cancellation evidence](PLANNING.md#step-5-verification)
 
 ## Agreed amount transport
 

@@ -13,5 +13,6 @@
     <PackageReference Include="xunit.runner.visualstudio" Version="3.1.5" PrivateAssets="all" />
     <ProjectReference Include="../../src/CashMovements.Grpc/CashMovements.Grpc.csproj" />
     <ProjectReference Include="../../src/CashMovements.Infrastructure/CashMovements.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/CashMovements.StatementClient/CashMovements.StatementClient.csproj" />
   </ItemGroup>
 </Project>
