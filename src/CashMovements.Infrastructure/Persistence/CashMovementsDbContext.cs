@@ -72,6 +72,7 @@ public sealed class CashMovementsDbContext : DbContext
             .IsUnique()
             .HasDatabaseName("UX_Movements_AccountId_ExternalRef");
         movements.HasIndex(movement => new { movement.AccountId, movement.OccurredAtUtc, movement.MovementId })
+            .IncludeProperties(movement => new { movement.ExternalRef, movement.Currency, movement.Amount, movement.Narration })
             .HasDatabaseName("IX_Movements_AccountId_OccurredAtUtc_MovementId");
     }
 

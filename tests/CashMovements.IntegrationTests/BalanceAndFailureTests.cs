@@ -56,7 +56,7 @@ public sealed class BalanceAndFailureTests : IClassFixture<SqlServerFixture>
             string? traceId = exception.Trailers.Get("trace-id")?.Value;
             Assert.False(string.IsNullOrWhiteSpace(traceId));
             LogEvent failureEvent = Assert.Single(fixture.Logs.Drain(), logEvent => logEvent.Exception?.Message == diagnostic);
-            Assert.Equal(typeof(UnaryRpcInterceptor).FullName, failureEvent.Category);
+            Assert.Equal(typeof(RpcOutcomeInterceptor).FullName, failureEvent.Category);
             Assert.Equal(LogLevel.Error, failureEvent.Level);
             Assert.Equal(traceId, failureEvent.Fields["TraceId"]);
             Assert.Equal("Internal", failureEvent.Fields["Outcome"]);

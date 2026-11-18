@@ -2,6 +2,10 @@ namespace CashMovements.Infrastructure.Persistence;
 
 public sealed class SqlMovementStore : IMovementStore
 {
+    private static readonly Expression<Func<MovementRecord, RecordedMovement>> MovementProjection =
+        movement => new RecordedMovement(movement.AccountId, movement.ExternalRef, movement.Currency,
+            movement.Amount, movement.OccurredAtUtc, movement.Narration);
+
     private readonly IDbContextFactory<CashMovementsDbContext> _contextFactory;
 
     public SqlMovementStore(IDbContextFactory<CashMovementsDbContext> contexts)
@@ -58,8 +62,7 @@ public sealed class SqlMovementStore : IMovementStore
     {
         return databaseContext.Movements.AsNoTracking()
             .Where(stored => stored.AccountId == movement.AccountId && stored.ExternalRef == movement.ExternalRef)
-            .Select(stored => new RecordedMovement(
-                stored.AccountId, stored.ExternalRef, stored.Currency, stored.Amount, stored.OccurredAtUtc, stored.Narration))
+            .Select(MovementProjection)
             .SingleOrDefaultAsync(cancellationToken);
     }
 
@@ -73,16 +76,77 @@ public sealed class SqlMovementStore : IMovementStore
     public async Task<LedgerResult<AccountBalance>> GetBalanceAsync(string accountId, CancellationToken cancellationToken)
     {
         await using CashMovementsDbContext databaseContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        return await ReadBalanceAsync(databaseContext, accountId, null, cancellationToken);
+    }
+
+    public async IAsyncEnumerable<LedgerResult<StatementEntry>> ReadStatementAsync(
+        string accountId, DateTime fromInclusiveUtc, DateTime toExclusiveUtc,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        await using CashMovementsDbContext databaseContext = await _contextFactory.CreateDbContextAsync(cancellationToken);
+        await using IDbContextTransaction snapshot = await databaseContext.Database.BeginTransactionAsync(
+            IsolationLevel.Snapshot, cancellationToken);
+
+        LedgerResult<AccountBalance> opening = await ReadBalanceAsync(databaseContext, accountId, fromInclusiveUtc, cancellationToken);
+        if (opening.Error is LedgerError openingError)
+        {
+            yield return LedgerResult<StatementEntry>.Failure(openingError);
+            yield break;
+        }
+
+        AccountBalance account = opening.Value;
+        decimal runningBalance = account.Balance;
+        yield return LedgerResult<StatementEntry>.Success(new StatementOpening(
+            account.AccountId, account.Currency, fromInclusiveUtc, toExclusiveUtc, runningBalance));
+
+        IQueryable<RecordedMovement> movements = databaseContext.Movements
+            .TagWith("Statement movements")
+            .AsNoTracking()
+            .Where(movement => movement.AccountId == accountId &&
+                movement.OccurredAtUtc >= fromInclusiveUtc && movement.OccurredAtUtc < toExclusiveUtc)
+            .OrderBy(movement => movement.OccurredAtUtc)
+            .ThenBy(movement => movement.MovementId)
+            .Select(MovementProjection);
+
+        await foreach (RecordedMovement movement in movements.AsAsyncEnumerable().WithCancellation(cancellationToken))
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            // A supported balance plus a decimal(19,4) posting always fits .NET decimal exactly.
+            // Enforce the narrower reporting range and minor unit before exposing the row.
+            runningBalance = checked(runningBalance + movement.Amount);
+            if (!CurrencyRules.IsReportableBalance(runningBalance, account.Currency))
+            {
+                yield return LedgerResult<StatementEntry>.Failure(LedgerError.AggregateOutOfRange);
+                yield break;
+            }
+            yield return LedgerResult<StatementEntry>.Success(new StatementMovement(movement, runningBalance));
+        }
+
+        await snapshot.CommitAsync(cancellationToken);
+    }
+
+    private static async Task<LedgerResult<AccountBalance>> ReadBalanceAsync(
+        CashMovementsDbContext databaseContext, string accountId, DateTime? beforeUtc, CancellationToken cancellationToken)
+    {
         // SQL SUM widens to decimal(38,4). Narrow in SQL so a large result never
         // reaches a .NET decimal materializer. A null balance signals overflow.
-        BalanceRow? accountBalance = await databaseContext.Database.SqlQuery<BalanceRow>($"""
+        const string balanceJoin = """
             SELECT a.AccountId, a.Currency,
                    TRY_CONVERT(decimal(28,4), COALESCE(SUM(m.Amount), 0)) AS Balance
             FROM dbo.Accounts AS a
             LEFT JOIN dbo.Movements AS m ON m.AccountId = a.AccountId
-            WHERE a.AccountId = {accountId}
+            """;
+        const string accountFilter = """
+
+            WHERE a.AccountId = {0}
             GROUP BY a.AccountId, a.Currency
-            """).SingleOrDefaultAsync(cancellationToken);
+            """;
+        // Keep the opening cutoff in the join so accounts with no earlier rows still return zero.
+        IQueryable<BalanceRow> balanceQuery = beforeUtc is DateTime cutoff
+            ? databaseContext.Database.SqlQueryRaw<BalanceRow>(
+                balanceJoin + " AND m.OccurredAtUtc < {1}" + accountFilter, accountId, cutoff)
+            : databaseContext.Database.SqlQueryRaw<BalanceRow>(balanceJoin + accountFilter, accountId);
+        BalanceRow? accountBalance = await balanceQuery.SingleOrDefaultAsync(cancellationToken);
 
         if (accountBalance is null)
             return LedgerResult<AccountBalance>.Failure(LedgerError.AccountNotFound);

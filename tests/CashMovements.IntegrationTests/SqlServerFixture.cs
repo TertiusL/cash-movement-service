@@ -25,6 +25,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
         ownsDatabase = true;
         try
         {
+            await ExecuteAdminAsync($"ALTER DATABASE [{databaseName}] SET ALLOW_SNAPSHOT_ISOLATION ON");
             DbContextOptions<CashMovementsDbContext> databaseOptions = new DbContextOptionsBuilder<CashMovementsDbContext>().UseSqlServer(testConnectionString).Options;
             await using (CashMovementsDbContext databaseContext = new(databaseOptions))
             {
@@ -34,7 +35,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
             WebApplicationBuilder hostBuilder = WebApplication.CreateBuilder();
             hostBuilder.Configuration["ConnectionStrings:CashMovements"] = testConnectionString;
             hostBuilder.Logging.AddProvider(Logs);
-            hostBuilder.Logging.AddFilter<TestLogProvider>(typeof(UnaryRpcInterceptor).FullName, LogLevel.Debug);
+            hostBuilder.Logging.AddFilter<TestLogProvider>(typeof(RpcOutcomeInterceptor).FullName, LogLevel.Debug);
             hostBuilder.Services.AddSingleton<IInterceptor>(probe);
             hostBuilder.WebHost.ConfigureKestrel(server =>
                 server.Listen(IPAddress.Loopback, 0, listener => listener.Protocols = HttpProtocols.Http2));
@@ -73,10 +74,15 @@ public sealed class SqlServerFixture : IAsyncLifetime
         await command.ExecuteNonQueryAsync();
     }
 
+    internal SqlConnection CreateConnection()
+    {
+        return new SqlConnection(testConnectionString);
+    }
+
     internal async Task<string> CreateAccountAsync(string currency = "ZAR")
     {
         string accountId = $"T-{Guid.NewGuid():N}".ToUpperInvariant();
-        await using SqlConnection connection = new SqlConnection(testConnectionString);
+        await using SqlConnection connection = CreateConnection();
         await connection.OpenAsync();
         using SqlCommand command = new SqlCommand("INSERT INTO dbo.Accounts (AccountId, Currency) VALUES (@id, @currency)", connection);
         command.Parameters.AddWithValue("@id", accountId);
@@ -87,7 +93,7 @@ public sealed class SqlServerFixture : IAsyncLifetime
 
     internal async Task<List<StoredMovement>> ReadRowsAsync(string accountId)
     {
-        await using SqlConnection connection = new SqlConnection(testConnectionString);
+        await using SqlConnection connection = CreateConnection();
         await connection.OpenAsync();
         using SqlCommand command = new SqlCommand("""
             SELECT MovementId, AccountId, ExternalRef, Currency, Amount, OccurredAtUtc, Narration
@@ -104,9 +110,11 @@ public sealed class SqlServerFixture : IAsyncLifetime
     }
 
     // Tests in this fixture's class run serially. Each probe is scoped to one test action.
-    internal async Task WithReaderProbeAsync(Func<DbCommand, CancellationToken, Task> beforeReader, Func<Task> runTest)
+    internal async Task WithReaderProbeAsync(Func<DbCommand, CancellationToken, Task> beforeReader, Func<Task> runTest,
+        Action<DbCommand, DataReaderDisposingEventData>? onReaderDisposing = null)
     {
         probe.BeforeReader = beforeReader;
+        probe.OnReaderDisposing = onReaderDisposing;
         try
         {
             await runTest();
@@ -114,12 +122,14 @@ public sealed class SqlServerFixture : IAsyncLifetime
         finally
         {
             probe.BeforeReader = null;
+            probe.OnReaderDisposing = null;
         }
     }
 
     private sealed class CommandProbe : DbCommandInterceptor
     {
         internal Func<DbCommand, CancellationToken, Task>? BeforeReader { get; set; }
+        internal Action<DbCommand, DataReaderDisposingEventData>? OnReaderDisposing { get; set; }
 
         public override async ValueTask<InterceptionResult<DbDataReader>> ReaderExecutingAsync(
             DbCommand command, CommandEventData eventData, InterceptionResult<DbDataReader> result,
@@ -127,6 +137,13 @@ public sealed class SqlServerFixture : IAsyncLifetime
         {
             if (BeforeReader is Func<DbCommand, CancellationToken, Task> beforeReader)
                 await beforeReader(command, cancellationToken);
+            return result;
+        }
+
+        public override InterceptionResult DataReaderDisposing(DbCommand command, DataReaderDisposingEventData eventData,
+            InterceptionResult result)
+        {
+            OnReaderDisposing?.Invoke(command, eventData);
             return result;
         }
     }

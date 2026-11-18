@@ -3,7 +3,9 @@ global using System.Data;
 global using System.Data.Common;
 global using System.Globalization;
 global using System.Net;
+global using System.Text.RegularExpressions;
 global using System.Threading.Channels;
+global using System.Xml.Linq;
 
 global using CashMovements.Grpc;
 global using CashMovements.Grpc.Contracts.V1;
@@ -20,5 +22,6 @@ global using Microsoft.EntityFrameworkCore.Diagnostics;
 global using Microsoft.Extensions.DependencyInjection;
 global using Microsoft.Extensions.Logging;
 global using Xunit;
+global using Xunit.Abstractions;
 
 global using LedgerClient = CashMovements.Grpc.Contracts.V1.CashMovements.CashMovementsClient;

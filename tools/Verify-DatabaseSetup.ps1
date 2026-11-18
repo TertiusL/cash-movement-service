@@ -29,17 +29,22 @@ function Invoke-Database([string]$Query, [string]$Database = 'CashMovements') {
     if ($LASTEXITCODE -ne 0) { throw "SQL verification failed in $Database (exit $LASTEXITCODE)." }
 }
 
-# Hash all columns in key order, including identities and migration history.
-function Get-DataSignature {
+# Hash all columns in key order. During an upgrade only the migration history should change.
+function Get-DataSignature([string]$Database = 'CashMovements', [switch]$LedgerOnly) {
     $query = @'
 SELECT CONVERT(char(64), HASHBYTES('SHA2_256',
     (SELECT * FROM dbo.Accounts ORDER BY AccountId FOR JSON PATH, INCLUDE_NULL_VALUES)), 2);
 SELECT CONVERT(char(64), HASHBYTES('SHA2_256',
     (SELECT * FROM dbo.Movements ORDER BY MovementId FOR JSON PATH, INCLUDE_NULL_VALUES)), 2);
+'@
+    if (-not $LedgerOnly) {
+        $query += @'
+
 SELECT CONVERT(char(64), HASHBYTES('SHA2_256',
     (SELECT * FROM dbo.__EFMigrationsHistory ORDER BY MigrationId FOR JSON PATH)), 2);
 '@
-    (Invoke-Database $query) -join "`n"
+    }
+    (Invoke-Database $query $Database) -join "`n"
 }
 
 function Test-Rerun([string]$Mode) {
@@ -99,17 +104,24 @@ try {
 IF (SELECT snapshot_isolation_state FROM sys.databases WHERE database_id=DB_ID()) <> 1
     THROW 51002, 'Snapshot isolation is disabled.', 1;
 IF (SELECT COUNT(*) FROM dbo.Accounts) <> 4 OR (SELECT COUNT(*) FROM dbo.Movements) <> 2 OR
-   (SELECT COUNT(*) FROM dbo.__EFMigrationsHistory) <> 1 OR
+   (SELECT COUNT(*) FROM dbo.__EFMigrationsHistory
+    WHERE MigrationId IN (N'20261118113139_InitialLedger', N'20261118135539_CoverStatementIndex')) <> 2 OR
    NOT EXISTS (SELECT 1 FROM dbo.Accounts WHERE AccountId=N'ACC-JPY' AND Currency=N'JPY') OR
    NOT EXISTS (SELECT 1 FROM dbo.Accounts WHERE AccountId=N'ACC-BHD' AND Currency=N'BHD') OR
    NOT EXISTS (SELECT 1 FROM dbo.Accounts WHERE AccountId=N'ACC-ZAR' AND Currency=N'ZAR') OR
    NOT EXISTS (SELECT 1 FROM dbo.Movements WHERE AccountId=N'ACC-001' AND Currency=N'ZAR'
                GROUP BY AccountId HAVING COUNT(*)=2 AND SUM(Amount)=12249.50)
     THROW 51003, 'Unexpected baseline fixture.', 1;
+IF (SELECT COUNT(*) FROM sys.indexes AS i
+    JOIN sys.index_columns AS ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
+    JOIN sys.columns AS c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
+    WHERE i.object_id=OBJECT_ID(N'dbo.Movements') AND i.name=N'IX_Movements_AccountId_OccurredAtUtc_MovementId'
+      AND ic.is_included_column=1 AND c.name IN (N'ExternalRef', N'Currency', N'Amount', N'Narration')) <> 4
+    THROW 51006, 'The statement index does not cover the movement projection.', 1;
 INSERT INTO dbo.Movements(AccountId, ExternalRef, Currency, Amount, OccurredAtUtc, Narration)
 VALUES(N'ACC-ZAR', N'VERIFY/SENTINEL', N'ZAR', 37.25, '2024-11-01T12:00:00.1234567', N'Preserve this posting.');
 '@
-    Write-Host 'PASS: clean database, snapshot isolation, four accounts and two seeded movements.'
+    Write-Host 'PASS: clean database, snapshot isolation, both migrations, covering statement index, four accounts and two seeded movements.'
     Test-Rerun setup
 
     Invoke-Database @'
@@ -153,6 +165,26 @@ ROLLBACK;
         throw 'Generated SQL and EF migration created different schemas or migration history.'
     }
     Write-Host 'PASS: schema script and EF migration agree on columns, indexes/keys, constraints and migration history.'
+
+    # Recreate the previous milestone in the empty comparison database, then take its normal scripted upgrade path.
+    Invoke-Tool dotnet @('ef','database','update','InitialLedger','--no-build','--configuration','Release','--project',$infra,'--startup-project',$infra) | Out-Null
+    Invoke-Database @'
+IF (SELECT COUNT(*) FROM dbo.__EFMigrationsHistory) <> 1 OR
+   NOT EXISTS (SELECT 1 FROM dbo.__EFMigrationsHistory WHERE MigrationId=N'20261118113139_InitialLedger')
+    THROW 51007, 'Expected the initial ledger schema before upgrade.', 1;
+INSERT INTO dbo.Accounts(AccountId, Currency) VALUES(N'UPGRADE/01', N'BHD');
+INSERT INTO dbo.Movements(AccountId, ExternalRef, Currency, Amount, OccurredAtUtc, Narration)
+VALUES(N'UPGRADE/01', N'EXISTING/01', N'BHD', -12.345, '2024-07-01T00:00:00.1234567', N'Keep the original posting.');
+'@ CashMovementsEfVerify
+    $beforeUpgrade = Get-DataSignature -Database CashMovementsEfVerify -LedgerOnly
+    Invoke-Database (Get-Content -LiteralPath 'db/schema.sql' -Raw) CashMovementsEfVerify | Out-Null
+    if ((Get-DataSignature -Database CashMovementsEfVerify -LedgerOnly) -cne $beforeUpgrade) {
+        throw 'The scripted upgrade changed an existing account or movement.'
+    }
+    if ((Get-SchemaSignature CashMovementsEfVerify) -cne (Get-SchemaSignature CashMovements)) {
+        throw 'The upgraded database differs from the verified current schema or migration history.'
+    }
+    Write-Host 'PASS: upgrading an existing initial ledger preserved every account and movement field and produced the current schema.'
 
     Invoke-Compose @('run', '--rm', 'db-init', 'large-demo') | Out-Null
     Invoke-Database @'

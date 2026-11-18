@@ -1,6 +1,6 @@
 # Cash Movements Service — approved implementation plan
 
-**Status.** The candidate approved the revised plan and its defaults on 18 November 2026. Steps 1–3 are complete. This checkpoint is ready for review after submission and current-balance verification. The acceptance checklist covers the full assignment. [Foundation verification](PLANNING.md#foundation-verification) · [Step 3 verification](PLANNING.md#step-3-verification)
+**Status.** The candidate approved the revised plan and its defaults on 18 November 2026. Steps 1–4 are complete. Statement streaming is ready for review. The console CSV client is step 5. [Foundation verification](PLANNING.md#foundation-verification) · [Step 3 verification](PLANNING.md#step-3-verification) · [Step 4 verification](PLANNING.md#step-4-verification)
 
 ## 1. Agreed scope and business rules
 
@@ -140,14 +140,14 @@ Cancel after several records, simulate a stream that fails after its final data 
 
 | Assessment requirement | Planned implementation and acceptance evidence |
 |---|---|
-| ☑ C#/.NET 8 modern service using gRPC and protobuf | Built the six-project solution. Verified both unary RPCs using the generated client over real HTTP/2. The statement RPC has a separate acceptance check below. |
+| ☑ C#/.NET 8 modern service using gRPC and protobuf | Built the six-project solution and exercised all three RPCs through the generated client over real HTTP/2. |
 | ☑ SQL Server persistence, keys, schema and seed scripts | Verified in step 2 against a clean Docker database, including reruns with existing data and an independent EF migration comparison. |
 | ☑ Six movement fields, record a movement, retrieve current balance as a sum | Verified canonical replies against all six SQL fields, signed sums, empty and unknown accounts, and totals wider than a movement. |
 | ☑ Per-account uniqueness, concurrent callers and differing duplicate fields | Verified both kinds of contested inserts on distinct SQL connections, changes to each recorded field, and reference reuse across accounts. |
 | ☑ Focused automated tests for concurrency and balance math | Passed against Docker SQL Server in step 3. Tests assert RPC outcomes, stored rows and balances. |
-| ☐ Ordered per-account date-range statement with running totals | Verify the opening header, ordered movements, snapshot consistency and closing for populated and empty periods in step 4. |
-| ☐ 50,000+ results without whole-result buffering at either endpoint | Server-streaming RPC, incremental generated client, large fixture, cancellation and memory-path checks. |
-| ☐ Error approach, assumptions and simplifications explained | Typed outcome/status mapping, negative/empty cases and documented decisions in SOLUTION. |
+| ☑ Ordered per-account date-range statement with running totals | Verified exact boundaries, same-instant ties, empty and populated ranges, and concurrent backdated writes inside one SQL snapshot. |
+| ☑ 50,000+ results without whole-result buffering at either endpoint | Checked every row in a 50,001-movement stream, inspected SQL plans, sampled managed memory, and verified early reader and snapshot disposal on cancellation. |
+| ☑ Error approach, assumptions and simplifications explained | SOLUTION describes typed statuses, snapshot lifetime, aggregate limits and partial-stream failures. The integration tests exercise errors before and after the header. |
 | ☐ One GitHub repository with all source, README and SOLUTION | Fresh-clone run-through including the SQL and gRPC host instructions. Verify repository contents and video link in step 6. |
 | ☐ Narrated 5–10 minute working demo | Follow the timed walkthrough below and verify duration, audio, code visibility and accessible playback. |
 

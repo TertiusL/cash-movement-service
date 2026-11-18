@@ -95,3 +95,37 @@ GO
 COMMIT;
 GO
 
+BEGIN TRANSACTION;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20261118135539_CoverStatementIndex'
+)
+BEGIN
+    DROP INDEX [IX_Movements_AccountId_OccurredAtUtc_MovementId] ON [dbo].[Movements];
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20261118135539_CoverStatementIndex'
+)
+BEGIN
+    CREATE INDEX [IX_Movements_AccountId_OccurredAtUtc_MovementId] ON [dbo].[Movements] ([AccountId], [OccurredAtUtc], [MovementId]) INCLUDE ([ExternalRef], [Currency], [Amount], [Narration]);
+END;
+GO
+
+IF NOT EXISTS (
+    SELECT * FROM [__EFMigrationsHistory]
+    WHERE [MigrationId] = N'20261118135539_CoverStatementIndex'
+)
+BEGIN
+    INSERT INTO [__EFMigrationsHistory] ([MigrationId], [ProductVersion])
+    VALUES (N'20261118135539_CoverStatementIndex', N'8.0.34');
+END;
+GO
+
+COMMIT;
+GO
+

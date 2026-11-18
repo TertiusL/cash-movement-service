@@ -14,7 +14,7 @@ public sealed class CashMovementsEndpoint : Contracts.V1.CashMovements.CashMovem
         Movement? movement = request.Movement;
         SubmitMovementInput? command = movement is null ? null : new SubmitMovementInput(
             movement.AccountId, movement.ExternalRef, movement.Currency, movement.Amount,
-            movement.OccurredAt is Timestamp timestamp ? MovementRules.ReadUtcInstant(timestamp.Seconds, timestamp.Nanos) : null,
+            ReadUtcInstant(movement.OccurredAt),
             movement.Narration);
 
         LedgerResult<Submission> result = await _ledger.SubmitAsync(command, context.CancellationToken);
@@ -24,7 +24,6 @@ public sealed class CashMovementsEndpoint : Contracts.V1.CashMovements.CashMovem
         }
 
         Submission submission = result.Value;
-        RecordedMovement recordedMovement = submission.Movement;
         return new SubmitMovementReply
         {
             Disposition = submission.Disposition switch
@@ -33,15 +32,7 @@ public sealed class CashMovementsEndpoint : Contracts.V1.CashMovements.CashMovem
                 RecordDisposition.AlreadyRecorded => SubmissionDisposition.AlreadyRecorded,
                 _ => throw new InvalidOperationException("Unknown submission disposition.")
             },
-            Movement = new Movement
-            {
-                AccountId = recordedMovement.AccountId,
-                ExternalRef = recordedMovement.ExternalRef,
-                Currency = recordedMovement.Currency,
-                Amount = CurrencyRules.Format(recordedMovement.Amount, recordedMovement.Currency),
-                OccurredAt = Timestamp.FromDateTime(recordedMovement.OccurredAtUtc),
-                Narration = recordedMovement.Narration
-            }
+            Movement = ToMovement(submission.Movement)
         };
     }
 
@@ -59,6 +50,65 @@ public sealed class CashMovementsEndpoint : Contracts.V1.CashMovements.CashMovem
             AccountId = accountBalance.AccountId,
             Currency = accountBalance.Currency,
             Balance = CurrencyRules.Format(accountBalance.Balance, accountBalance.Currency)
+        };
+    }
+
+    public override async Task ExportStatement(ExportStatementRequest request,
+        IServerStreamWriter<StatementFrame> responseStream, ServerCallContext context)
+    {
+        IAsyncEnumerable<LedgerResult<StatementEntry>> entries = _ledger.ExportStatementAsync(
+            request.AccountId, ReadUtcInstant(request.FromInclusive), ReadUtcInstant(request.ToExclusive),
+            context.CancellationToken);
+
+        await foreach (LedgerResult<StatementEntry> result in entries)
+        {
+            if (result.Error is LedgerError error)
+            {
+                throw BusinessRpcException.From(error);
+            }
+
+            StatementFrame frame = result.Value switch
+            {
+                StatementOpening opening => new StatementFrame
+                {
+                    Header = new StatementHeader
+                    {
+                        AccountId = opening.AccountId,
+                        Currency = opening.Currency,
+                        FromInclusive = Timestamp.FromDateTime(opening.FromInclusiveUtc),
+                        ToExclusive = Timestamp.FromDateTime(opening.ToExclusiveUtc),
+                        OpeningBalance = CurrencyRules.Format(opening.OpeningBalance, opening.Currency)
+                    }
+                },
+                StatementMovement entry => new StatementFrame
+                {
+                    Row = new StatementRow
+                    {
+                        Movement = ToMovement(entry.Movement),
+                        RunningBalance = CurrencyRules.Format(entry.RunningBalance, entry.Movement.Currency)
+                    }
+                },
+                _ => throw new InvalidOperationException("Unknown statement entry.")
+            };
+            await responseStream.WriteAsync(frame, context.CancellationToken);
+        }
+    }
+
+    private static DateTime? ReadUtcInstant(Timestamp? timestamp)
+    {
+        return timestamp is null ? null : MovementRules.ReadUtcInstant(timestamp.Seconds, timestamp.Nanos);
+    }
+
+    private static Movement ToMovement(RecordedMovement recordedMovement)
+    {
+        return new Movement
+        {
+            AccountId = recordedMovement.AccountId,
+            ExternalRef = recordedMovement.ExternalRef,
+            Currency = recordedMovement.Currency,
+            Amount = CurrencyRules.Format(recordedMovement.Amount, recordedMovement.Currency),
+            OccurredAt = Timestamp.FromDateTime(recordedMovement.OccurredAtUtc),
+            Narration = recordedMovement.Narration
         };
     }
 }

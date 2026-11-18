@@ -21,6 +21,7 @@ internal sealed class BusinessRpcException : RpcException
             LedgerError.UnsupportedCurrency => (StatusCode.InvalidArgument, BusinessErrorReason.UnsupportedCurrency),
             LedgerError.InvalidAmount => (StatusCode.InvalidArgument, BusinessErrorReason.InvalidAmount),
             LedgerError.InvalidTimestamp => (StatusCode.InvalidArgument, BusinessErrorReason.InvalidTimestamp),
+            LedgerError.InvalidRange => (StatusCode.InvalidArgument, BusinessErrorReason.InvalidRange),
             LedgerError.InvalidNarration => (StatusCode.InvalidArgument, BusinessErrorReason.InvalidNarration),
             LedgerError.AccountNotFound => (StatusCode.NotFound, BusinessErrorReason.AccountNotFound),
             LedgerError.Conflict => (StatusCode.AlreadyExists, BusinessErrorReason.Conflict),

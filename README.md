@@ -1,6 +1,6 @@
 # Cash Movements Service
 
-This .NET 8 gRPC service records cash movements and retrieves an account's current balance from SQL Server. The versioned contract also defines the statement RPC, scheduled for step 4.
+This .NET 8 gRPC service records cash movements, retrieves current balances and streams account statements from SQL Server.
 
 ## Build on Windows
 
@@ -16,9 +16,9 @@ dotnet build CashMovements.sln --no-restore -c Release -m:1
 | Project | Responsibility at this checkpoint |
 |---|---|
 | Domain | Identifier, timestamp, narration and money rules. Defines equality of canonical movements. |
-| UseCases | Validates input and exposes typed submission and balance outcomes through a persistence interface. |
-| Infrastructure | EF Core mappings and migration, atomic recording and duplicate recovery, SQL balance projection. |
-| Grpc | HTTP/2 host, protobuf mapping, typed error trailers and correlated outcome logs. |
+| UseCases | Validates inputs and exposes typed submission, balance and statement results. |
+| Infrastructure | EF Core mappings, atomic recording and duplicate recovery, SQL aggregates and snapshot-based statement reads. |
+| Grpc | HTTP/2 host, protobuf mapping, incremental statement writes, typed error trailers and correlated outcome logs. |
 | UnitTests / IntegrationTests | Domain boundary cases and generated-client gRPC calls against a migrated SQL Server database. |
 
 ## Start and initialise Docker SQL Server
@@ -33,7 +33,7 @@ docker compose run --rm db-init
 
 The [Compose configuration](compose.yaml) runs SQL Server 2022 Developer and uses a named data volume. The one-shot initializer executes [bootstrap](db/bootstrap.sql), the [EF-generated schema](db/schema.sql) and [base seed](db/seed.sql) in that order. Bootstrap enables snapshot isolation on the `CashMovements` database. Rerun `docker compose run --rm db-init` to apply any missing migrations and seed keys. The standard seed includes `ACC-001` with a ZAR deposit and withdrawal totalling R12,249.50, plus empty `ACC-ZAR`, `ACC-JPY` and `ACC-BHD` accounts.
 
-The separate `docker compose run --rm db-init large-demo` fixture adds `ACC-DEMO`, a June 2024 opening deposit of R100.00 and 50,001 July movements. July closes at R100.50. This prepares data for the later statement stage.
+The separate `docker compose run --rm db-init large-demo` fixture adds `ACC-DEMO`, a June 2024 opening deposit of R100.00 and 50,001 July movements. July closes at R100.50.
 
 ## Run and test submission and balance
 
@@ -65,6 +65,22 @@ $file = 'cashmovements/v1/cash_movements.proto'
 
 On a fresh base seed, the first call returns `SUBMISSION_DISPOSITION_RECORDED` with `ACC-ZAR`, `REVIEW/001`, `ZAR` and `125.50`. Repeating it yields `SUBMISSION_DISPOSITION_ALREADY_RECORDED` and the balance stays `125.50`. Changing just the narration on that key returns `ALREADY_EXISTS` with reason `CONFLICT` in the protobuf `cash-error-bin` trailer. The server returns a `trace-id` trailer for correlation. See the [contract](src/CashMovements.Grpc/Protos/cashmovements/v1/cash_movements.proto) and [end-to-end examples](tests/CashMovements.IntegrationTests/MovementRpcTests.cs).
 
+## Stream a statement
+
+With the base seed loaded and the host running, use `grpcurl` from a second PowerShell session in the repository root to request just 16 July for `ACC-001`.
+
+```powershell
+'{"accountId":"acc-001","fromInclusive":"2024-07-16T00:00:00Z","toExclusive":"2024-07-17T00:00:00Z"}' | grpcurl -insecure -import-path src/CashMovements.Grpc/Protos -proto cashmovements/v1/cash_movements.proto -d '@' localhost:5001 cashmovements.v1.CashMovements/ExportStatement
+```
+
+On the base seed, the header gives the canonical account, currency, requested UTC bounds and an opening balance of `12500.00`. The next frame carries the `-250.50` withdrawal and a running balance of `12249.50`. Successful end-of-stream confirms that closing balance. A range with no movements emits just the header and closes at its opening balance. A non-OK terminal status indicates an incomplete export even when the client has received rows.
+
+To run only the statement checks after building and setting `CASHMOVEMENTS_TEST_CONNECTION`, use the following command. The generated client reads incrementally over loopback HTTP/2. The tests load the large fixture into a disposable database.
+
+```powershell
+dotnet test tests/CashMovements.IntegrationTests --no-build -c Release --filter 'FullyQualifiedName~Statement'
+```
+
 ## Inspect the database
 
 In Rider's Database window, add a Microsoft SQL Server data source for host `127.0.0.1`, port `14333`, database `CashMovements`, user `sa` and the local password. Trust the local container certificate for this development connection. Expand `dbo` to see the tables, composite currency foreign key and the unique index on `(AccountId, ExternalRef)`.
@@ -87,7 +103,7 @@ After a Release build and `dotnet tool restore`, run the isolated database setup
 .\tools\Verify-DatabaseSetup.ps1
 ```
 
-The check uses its own Docker Compose project, port 14433 and a disposable database volume. Use `-Port` to choose a different free port. It compares the scripted schema with an EF migration applied independently, reruns setup with existing data and removes its disposable resources on exit. See [the verification record](PLANNING.md#foundation-verification) for the checks and results from this checkpoint.
+The check uses its own Docker Compose project, port 14433 and a disposable database volume. Use `-Port` to choose a different free port. It compares the scripted schema with the EF migrations, upgrades the original schema with an existing posting, reruns both seed modes and removes its disposable resources on exit. [Foundation verification](PLANNING.md#foundation-verification) · [Statement and upgrade verification](PLANNING.md#step-4-verification)
 
 EF migrations in Infrastructure are the schema source of truth. From the root, regenerate the committed SQL after an intentional migration change:
 

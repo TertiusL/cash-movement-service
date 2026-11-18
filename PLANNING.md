@@ -168,3 +168,33 @@ The repository had no `AGENTS.md` before this review. The assistant added the su
 On 18 November 2026, `dotnet build CashMovements.sln --no-restore -c Release -m:1 -p:UseSharedCompilation=false` completed with zero warnings and errors. The existing Release suite passed all 50 unit and 35 integration cases against an isolated Docker SQL Server, with zero skips. EF's `migrations has-pending-model-changes` check confirmed that the revised mappings match the existing model snapshot.
 
 The existing `tools/Verify-DatabaseSetup.ps1 -Port 14533` verifier also passed. It compared the scripted schema with an independent EF migration, checked database constraints and confirmed that both the base seed and the 50,001-entry July fixture preserved existing data on rerun. Both Docker verification runs removed their disposable containers, networks and volumes.
+
+## Step 4 verification
+
+On 18 November 2026 the candidate requested statement streaming and specified the consistency and memory requirements:
+
+> Stream the statement header/opening balance and ordered movements from one consistent SQL snapshot. Preserve bounded memory use without buffering the entire result.
+
+The assistant implemented the existing server-streaming contract and used the generated client to verify it over loopback HTTP/2 against Docker SQL Server 2022 Developer. The client consumed one frame at a time. The selected console CSV client is step 5.
+
+| Executed check | Observed result |
+|---|---|
+| Build and full regression suite | .NET SDK 8.0.428, Release build with zero warnings and zero errors. All 50 unit and 56 integration tests passed with zero skips, including 21 statement cases. The isolated Compose project and its volume were removed after each run. |
+| Opening, running and closing balances | An opening of 100.00 and two lower-bound movements of −30.00 and +5.00 produced 70.00 then 75.00. The movement of +99.00 exactly at the upper bound appeared in the next period, which opened at 75.00 and closed at 174.00. A later empty period returned a single header with opening and closing 174.00. A never-used JPY account returned a single header with zero. |
+| Boundaries and order | The lower bound was one 100 ns tick past midnight. The opening included a posting one tick earlier. A one-tick adjacent period included exactly its lower-bound posting. Equal timestamps followed movement ID even with references in reverse lexical order. The latest event had been inserted first. Full frames matched the expected canonical movement, timestamp and narration. A second account’s movements stayed outside the result. |
+| Concurrent backdated writes | The test paused the range query after the opening and confirmed both SQL commands shared the same `Snapshot` transaction object. Two independent submissions committed +20 before the lower bound and +7 within the period. The active populated export still opened at 100.00 and closed at 70.00. A new export opened at 120.00 and closed at 97.00. In the empty-period variant the active export closed at 100.00 with zero rows, and a new export closed at 127.00. |
+| Before- and after-header errors | Invalid IDs, timestamps, bounds and unknown accounts produced their typed errors before the first frame. Synthetic positive and negative SQL opening sums exercised the aggregate limits. An unreportable opening failed before the header. Totals crossing the limit after a valid row ended the stream with `OUT_OF_RANGE` before the offending row. An injected row-query exception after a header returned safe `INTERNAL` details with one correlated server diagnostic. |
+| Large stream | Loaded the checked-in SQL fixture. Verified every reference, timestamp, amount and running balance for 1,000 and 50,001 movements. The full July stream opened at 100.00, started with a running balance of 99.00, and closed at 100.50 on terminal gRPC `OK`. One ordered row query served each export. |
+| Cancellation and cleanup | Cancelled a 50,001-movement export after receiving eight movements. In the final run EF disposed its active reader after 267 reads. The transaction detached, the SQL connection closed, the client received `CANCELLED`, and the boundary logged cancellation at debug level. A subsequent balance request succeeded at 100.50. The read count can vary with transport buffering. |
+| Database upgrade | EF reported no pending model changes. The database verifier passed clean setup, independent EF/schema comparison, SQL constraints, seed reruns and an upgrade from the initial migration. The upgraded database retained its pre-existing BHD account and posting, including identity and all fields. |
+
+**Index decision.** The first attempt at an estimated-plan diagnostic returned no plan for the parameterised call. The assistant changed the diagnostic to replay the same SQL and parameters on a separate connection with `SET STATISTICS XML ON` after the real gRPC stream finished. Actual plans for both sizes showed a clustered scan on `PK_Movements` and a sort. The assistant added the four projected payload columns to the existing ordered index in a new migration. Both final plans consisted of an `Index Seek` on `IX_Movements_AccountId_OccurredAtUtc_MovementId`. These observations apply to the tested fixture and parameters.
+
+**Managed memory.** The final full-suite run sampled live managed bytes with `GC.GetTotalMemory(true)`. The gRPC host and client shared a process with the test runner. Other tests, collection and runtime warm-up affect these measurements. The implementation evidence for bounded memory is the single untracked projection, incremental SQL enumeration, an awaited write per frame and the client's incremental read loop.
+
+| Movements | Before call | At midpoint | After completion |
+|---|---:|---:|---:|
+| 1,000 | 5,197,288 | 5,345,184 | 1,461,376 |
+| 50,001 | 1,436,160 | 1,142,312 | 1,128,944 |
+
+**Commands run.** Built with `dotnet build CashMovements.sln --no-restore -c Release -m:1 -p:UseSharedCompilation=false`. Ran `dotnet test CashMovements.sln --no-build --no-restore -c Release -m:1` with detailed console and TRX loggers, `dotnet ef migrations has-pending-model-changes` against Infrastructure, and `.\tools\Verify-DatabaseSetup.ps1 -Port 14533`. The README includes a shorter Rider/PowerShell review path. Its optional manual `grpcurl` example was not executed. [Run the statement checks](README.md#stream-a-statement)

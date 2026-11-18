@@ -19,7 +19,7 @@ public static class Program
         builder.Services.AddScoped<IMovementStore, SqlMovementStore>();
         builder.Services.AddScoped<LedgerService>();
         builder.Services.AddSingleton<IsTemporaryStoreFailure>(SqlFailure.IsTemporary);
-        builder.Services.AddGrpc(options => options.Interceptors.Add<UnaryRpcInterceptor>());
+        builder.Services.AddGrpc(options => options.Interceptors.Add<RpcOutcomeInterceptor>());
 
         WebApplication application = builder.Build();
         application.MapGrpcService<CashMovementsEndpoint>();

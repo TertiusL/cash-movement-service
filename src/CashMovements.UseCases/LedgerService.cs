@@ -45,4 +45,35 @@ public sealed class LedgerService
 
         return await _movementStore.GetBalanceAsync(canonicalAccountId, cancellationToken);
     }
+
+    public async IAsyncEnumerable<LedgerResult<StatementEntry>> ExportStatementAsync(
+        string accountId, DateTime? fromInclusiveUtc, DateTime? toExclusiveUtc,
+        [EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!MovementRules.TryCanonicalIdentifier(accountId, MovementRules.AccountIdMaxLength, out string canonicalAccountId))
+        {
+            yield return LedgerResult<StatementEntry>.Failure(LedgerError.InvalidIdentifier);
+            yield break;
+        }
+
+        if (fromInclusiveUtc is not DateTime { Kind: DateTimeKind.Utc } start ||
+            toExclusiveUtc is not DateTime { Kind: DateTimeKind.Utc } end)
+        {
+            yield return LedgerResult<StatementEntry>.Failure(LedgerError.InvalidTimestamp);
+            yield break;
+        }
+
+        if (start >= end)
+        {
+            yield return LedgerResult<StatementEntry>.Failure(LedgerError.InvalidRange);
+            yield break;
+        }
+
+        await foreach (LedgerResult<StatementEntry> entry in
+            _movementStore.ReadStatementAsync(canonicalAccountId, start, end, cancellationToken))
+        {
+            yield return entry;
+        }
+    }
 }

@@ -12,5 +12,6 @@ public enum LedgerError
     AccountNotFound,
     Conflict,
     AccountCurrencyMismatch,
-    AggregateOutOfRange
+    AggregateOutOfRange,
+    InvalidRange
 }

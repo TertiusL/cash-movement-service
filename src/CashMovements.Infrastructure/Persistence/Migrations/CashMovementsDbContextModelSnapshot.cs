@@ -95,6 +95,8 @@ namespace CashMovements.Infrastructure.Persistence.Migrations
                     b.HasIndex("AccountId", "OccurredAtUtc", "MovementId")
                         .HasDatabaseName("IX_Movements_AccountId_OccurredAtUtc_MovementId");
 
+                    SqlServerIndexBuilderExtensions.IncludeProperties(b.HasIndex("AccountId", "OccurredAtUtc", "MovementId"), new[] { "ExternalRef", "Currency", "Amount", "Narration" });
+
                     b.ToTable("Movements", "dbo", t =>
                         {
                             t.HasCheckConstraint("CK_Movements_AccountId", "DATALENGTH(REPLACE(TRANSLATE([AccountId], N'ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/_', REPLICATE(N'X', 39)), N'X', N'')) = 0\nAND [AccountId] LIKE N'%[A-Z0-9]%'");
