@@ -1,0 +1,37 @@
+# .NET and local IDE output
+bin/
+obj/
+TestResults/
+.idea/
+.vs/
+*.user
+*.suo
+*.sln.DotSettings.user
+*.rsuser
+*.sln.iml
+
+# Local configuration and verification output
+.env
+.env.*
+!.env.example
+appsettings.Local.json
+appsettings.*.Local.json
+appsettings.Development.json
+compose.override.y*ml
+docker-compose.override.y*ml
+secrets.json
+*.pfx
+*.p12
+*.key
+*.pem
+artifacts/
+.artifacts/
+
+# Statement exports, including interrupted runs
+exports/
+*.csv
+*.csv.partial
+*.csv.*.partial
+
+# The original assessment is supplied separately
+Senior_C___NET_Developer__Backend__Assignment*.pdf

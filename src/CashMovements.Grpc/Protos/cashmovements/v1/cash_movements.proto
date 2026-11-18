@@ -1,0 +1,97 @@
+syntax = "proto3";
+
+package cashmovements.v1;
+option csharp_namespace = "CashMovements.Grpc.Contracts.V1";
+
+import "google/protobuf/timestamp.proto";
+
+service CashMovements {
+  rpc SubmitMovement(SubmitMovementRequest) returns (SubmitMovementReply);
+  rpc GetBalance(GetBalanceRequest) returns (GetBalanceReply);
+  // A successful stream starts with one header, followed by zero or more rows.
+  rpc ExportStatement(ExportStatementRequest) returns (stream StatementFrame);
+}
+
+message Movement {
+  string external_ref = 1;
+  string account_id = 2;
+  string currency = 3;
+  // Signed invariant decimal, exactly representable in the account currency.
+  string amount = 4;
+  google.protobuf.Timestamp occurred_at = 5;
+  string narration = 6;
+}
+
+message SubmitMovementRequest {
+  Movement movement = 1;
+}
+
+enum SubmissionDisposition {
+  SUBMISSION_DISPOSITION_UNSPECIFIED = 0;
+  SUBMISSION_DISPOSITION_RECORDED = 1;
+  SUBMISSION_DISPOSITION_ALREADY_RECORDED = 2;
+}
+
+message SubmitMovementReply {
+  SubmissionDisposition disposition = 1;
+  Movement movement = 2;
+}
+
+message GetBalanceRequest {
+  string account_id = 1;
+}
+
+message GetBalanceReply {
+  string account_id = 1;
+  string currency = 2;
+  string balance = 3;
+}
+
+message ExportStatementRequest {
+  string account_id = 1;
+  google.protobuf.Timestamp from_inclusive = 2;
+  google.protobuf.Timestamp to_exclusive = 3;
+}
+
+message StatementHeader {
+  string account_id = 1;
+  string currency = 2;
+  google.protobuf.Timestamp from_inclusive = 3;
+  google.protobuf.Timestamp to_exclusive = 4;
+  string opening_balance = 5;
+}
+
+message StatementRow {
+  Movement movement = 1;
+  string running_balance = 2;
+}
+
+// On successful completion, closing is the last running balance, or the opening
+// balance if there were no rows. Both come from the same statement snapshot.
+message StatementFrame {
+  oneof content {
+    StatementHeader header = 1;
+    StatementRow row = 2;
+  }
+}
+
+enum BusinessErrorReason {
+  BUSINESS_ERROR_REASON_UNSPECIFIED = 0;
+  BUSINESS_ERROR_REASON_INVALID_IDENTIFIER = 1;
+  BUSINESS_ERROR_REASON_INVALID_AMOUNT = 2;
+  BUSINESS_ERROR_REASON_INVALID_CURRENCY = 3;
+  BUSINESS_ERROR_REASON_UNSUPPORTED_CURRENCY = 4;
+  BUSINESS_ERROR_REASON_INVALID_TIMESTAMP = 5;
+  BUSINESS_ERROR_REASON_INVALID_NARRATION = 6;
+  BUSINESS_ERROR_REASON_INVALID_RANGE = 7;
+  BUSINESS_ERROR_REASON_ACCOUNT_NOT_FOUND = 8;
+  BUSINESS_ERROR_REASON_CONFLICT = 9;
+  BUSINESS_ERROR_REASON_ACCOUNT_CURRENCY_MISMATCH = 10;
+  BUSINESS_ERROR_REASON_AGGREGATE_OUT_OF_RANGE = 11;
+  BUSINESS_ERROR_REASON_INVALID_MOVEMENT = 12;
+}
+
+// Expected business errors carry this serialized message in the cash-error-bin trailer.
+message BusinessError {
+  BusinessErrorReason reason = 1;
+}
