@@ -1,19 +1,34 @@
-using Microsoft.EntityFrameworkCore;
-
 namespace CashMovements.Infrastructure.Persistence;
 
-public sealed class CashMovementsDbContext(DbContextOptions<CashMovementsDbContext> options) : DbContext(options)
+public sealed class CashMovementsDbContext : DbContext
 {
     private const string IdentifierCollation = "Latin1_General_100_BIN2";
 
-    internal DbSet<AccountRecord> Accounts => Set<AccountRecord>();
-    internal DbSet<MovementRecord> Movements => Set<MovementRecord>();
+    public CashMovementsDbContext(DbContextOptions<CashMovementsDbContext> options) : base(options)
+    {
+    }
+
+    internal DbSet<AccountRecord> Accounts
+    {
+        get
+        {
+            return Set<AccountRecord>();
+        }
+    }
+
+    internal DbSet<MovementRecord> Movements
+    {
+        get
+        {
+            return Set<MovementRecord>();
+        }
+    }
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.HasDefaultSchema("dbo");
 
-        var accounts = modelBuilder.Entity<AccountRecord>();
+        EntityTypeBuilder<AccountRecord> accounts = modelBuilder.Entity<AccountRecord>();
         accounts.ToTable("Accounts", table =>
         {
             table.HasCheckConstraint("CK_Accounts_AccountId", CanonicalIdentifier("[AccountId]"));
@@ -25,7 +40,7 @@ public sealed class CashMovementsDbContext(DbContextOptions<CashMovementsDbConte
         accounts.Property(account => account.AccountId).HasMaxLength(64).UseCollation(IdentifierCollation);
         accounts.Property(account => account.Currency).HasMaxLength(3).UseCollation(IdentifierCollation);
 
-        var movements = modelBuilder.Entity<MovementRecord>();
+        EntityTypeBuilder<MovementRecord> movements = modelBuilder.Entity<MovementRecord>();
         movements.ToTable("Movements", table =>
         {
             table.HasCheckConstraint("CK_Movements_AccountId", CanonicalIdentifier("[AccountId]"));
@@ -60,18 +75,20 @@ public sealed class CashMovementsDbContext(DbContextOptions<CashMovementsDbConte
             .HasDatabaseName("IX_Movements_AccountId_OccurredAtUtc_MovementId");
     }
 
-    private static string CanonicalIdentifier(string column)
+    private static string CanonicalIdentifier(string columnName)
     {
-        const string allowed = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/_";
+        const string allowedCharacters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-/_";
         // Fold every permitted character to X and remove it. DATALENGTH also detects trailing spaces.
         return $"""
-            DATALENGTH(REPLACE(TRANSLATE({column}, N'{allowed}', REPLICATE(N'X', {allowed.Length})), N'X', N'')) = 0
-            AND {column} LIKE N'%[A-Z0-9]%'
+            DATALENGTH(REPLACE(TRANSLATE({columnName}, N'{allowedCharacters}', REPLICATE(N'X', {allowedCharacters.Length})), N'X', N'')) = 0
+            AND {columnName} LIKE N'%[A-Z0-9]%'
             """;
     }
 
-    private static DateTime RequireUtc(DateTime value) =>
-        value.Kind == DateTimeKind.Utc
+    private static DateTime RequireUtc(DateTime value)
+    {
+        return value.Kind == DateTimeKind.Utc
             ? value
             : throw new ArgumentException("A movement timestamp must be UTC.", nameof(value));
+    }
 }

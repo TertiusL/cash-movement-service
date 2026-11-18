@@ -7,6 +7,7 @@ The [approved implementation plan](IMPLEMENTATION_PLAN.md) consolidates the agre
 | Topic | Origin and status | Reason |
 |---|---|---|
 | Account currency | Candidate's initial decision | A fixed currency per account gives every balance one unit. |
+| Amount transport | **Agreed.** The candidate chose invariant decimal strings in protobuf because it has no built-in decimal scalar. The service validates and parses a submitted amount once at entry. Business calculations use C# `decimal` and stored movements use SQL `decimal(19,4)`. The money path excludes `float` and `double`. | The wire value is readable and exact with a single field. The application must enforce syntax, range and currency precision and reject values that would require rounding. We considered coefficient plus scale and integer minor units. Both represent money exactly but require representation rules and additional conversion logic. [Decision and worked example](SOLUTION.md#agreed-amount-transport) |
 | Account existence | **Agreed.** The candidate confirmed that movements require an existing account, that unknown accounts return `AccountNotFound`, and that seed data should provide usable accounts. | A typo must not create an account or a posting. The trade-off is that provisioning precedes the first movement. A known empty account can already be queried in its own currency. |
 | Movement identity | The brief requires uniqueness per account, including concurrent submissions. The assistant suggested making the first committed movement authoritative and treating changed narration as a conflict. The candidate agreed and explicitly included amount, currency, occurrence time and narration. | A caller can safely retry after losing a response. A conflicting submission cannot change the ledger or give the impression that a correction was recorded. |
 | Business outcomes | Candidate requested transport-independent outcomes in `UseCases`, with a preference for enums, central API error mapping and shared exception handling. | Clients can act on stable codes. Every endpoint follows one policy using in-process components. |
@@ -136,3 +137,34 @@ The assistant created the four service projects, two test project shells, versio
 | Large fixture | The SQL fixture produced one R100.00 opening movement, 50,001 July movements netting R0.50, and a closing of R100.50. Repeating large-demo setup preserved the full data and migration-history hashes. This verified the data for the later streaming test. |
 
 The verifier removed its own temporary Compose project, container, network and volume. The downloaded SQL Server image remains available in Docker Desktop. The four service projects and two test shells follow the approved dependency layout. EF also created its conventional index on the composite foreign key. Business RPC behaviour, concurrent submissions, streamed exports and the console client are reserved for subsequent stages.
+
+## Step 3 verification
+
+On 18 November 2026 the candidate asked for movement submission and SQL Server evidence, followed by a file-by-file review. The instruction “Complete any other work explicitly included in step 3, without moving into later steps” also covers `GetBalance`. The assistant implemented both unary operations, their error and logging policy, and the tests. The candidate's agreed business rules determined validation and retry precedence.
+
+The assistant suggested a test-only EF command interceptor to pause requests immediately before their competing inserts. At that point both callers have finished their lookups. The tests assert that the two SQL connection IDs differ and check the resulting row using an independent SQL query. A separate probe supplies synthetic large numeric inputs to the production balance projection to reach the aggregate limits with a small fixture.
+
+| Executed check | Observed result |
+|---|---|
+| Build and final suite | Release build on .NET SDK 8.0.428. Ran `dotnet test CashMovements.sln --no-restore -c Release -m:1 -p:UseSharedCompilation=false` against SQL Server 2022 Developer in a disposable Compose project. All 50 unit and 35 integration cases passed, with zero skips. Integration calls used the generated client and real Kestrel HTTP/2 on loopback. The fixtures used freshly migrated databases. Compose removed the disposable container, network and volume. |
+| Valid movement and equivalent retry | The first submission returned `Recorded`. A retry with equivalent decimal spelling, identifier/currency casing and UTC instant returned `AlreadyRecorded`. All six canonical fields matched the SQL row, and the balance was ZAR 125.50. |
+| Simultaneous requests | The equal-payload race returned one `Recorded` and one `AlreadyRecorded`. The changed-amount race returned one `Recorded` and one typed `Conflict`. In both cases exactly one row existed, its fields and the balance matched the winning request, and retrying the winner succeeded. A separate unrelated SQL key violation with no winning movement surfaced as a safe server failure. |
+| Conflicts and invalid input | Separate retries changed amount, supported currency, one UTC tick, narration case and trailing space. Each returned `ALREADY_EXISTS` with `CONFLICT` and preserved the original row and balance. Invalid submissions and account lookup failures left no movement. A corrected submission could use the reference. A malformed amount on a used key still returned `InvalidAmount`. |
+| Current balance and transfer retries | Verified empty, negative and zero balances for ZAR, JPY and BHD, including fractional minor-unit rejections. Two maximum BHD movements produced exactly 1999999999999999.998. Synthetic wide SQL sums for both signs passed immediately inside 10²⁴ and returned typed `OUT_OF_RANGE` at the limit. Both independent transfer retry histories produced one debit and one credit, with balances of −200 and +200 on their respective accounts. |
+| Error mapping and logs | A real SQL command timeout returned `UNAVAILABLE`. An injected unexpected provider failure returned a safe `INTERNAL` response and one correlated diagnostic error. Client cancellation reached the EF command token, logged at debug level and allowed the next call to succeed. A normal recording logged its operation, outcome and trace and omitted the submitted amount and narration. |
+
+Reproduction instructions are in the [README](README.md#run-and-test-submission-and-balance). The optional manual `grpcurl` examples were not executed in this environment. The automated client exercised the same two RPCs. Statement reads and running arithmetic remain scheduled for step 4.
+
+### Step 3 review follow-up
+
+> We deliberately represent amounts as decimal strings in protobuf because protobuf has no built-in decimal scalar.
+
+> Read AGENTS.md and apply its coding conventions to the current handwritten implementation.
+
+The candidate confirmed the existing amount representation and asked to record its alternatives and trade-off. The assistant documented that decision and traced a submission from the wire string through its single conversion to C# `decimal` and the SQL movement column. The [amount transport decision](SOLUTION.md#agreed-amount-transport) includes examples for ZAR, JPY and BHD.
+
+The repository had no `AGENTS.md` before this review. The assistant added the supplied rules at the root, split grouped top-level types, centralised explicit namespace imports by project and updated handwritten production and test members. A Roslyn syntax check covered all 35 handwritten C# files in six projects. It found no remaining violations in the checked type placement, member bodies, explicit local types or import rules.
+
+On 18 November 2026, `dotnet build CashMovements.sln --no-restore -c Release -m:1 -p:UseSharedCompilation=false` completed with zero warnings and errors. The existing Release suite passed all 50 unit and 35 integration cases against an isolated Docker SQL Server, with zero skips. EF's `migrations has-pending-model-changes` check confirmed that the revised mappings match the existing model snapshot.
+
+The existing `tools/Verify-DatabaseSetup.ps1 -Port 14533` verifier also passed. It compared the scripted schema with an independent EF migration, checked database constraints and confirmed that both the base seed and the 50,001-entry July fixture preserved existing data on rerun. Both Docker verification runs removed their disposable containers, networks and volumes.

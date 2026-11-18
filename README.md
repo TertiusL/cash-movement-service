@@ -1,6 +1,6 @@
 # Cash Movements Service
 
-This checkpoint contains the .NET 8 solution, the versioned gRPC contract and a runnable SQL Server schema with repeatable seeds. The three RPCs are defined in protobuf. Business handlers, business tests, streaming execution and the console CSV client belong to later stages.
+This .NET 8 gRPC service records cash movements and retrieves an account's current balance from SQL Server. The versioned contract also defines the statement RPC, scheduled for step 4.
 
 ## Build on Windows
 
@@ -15,13 +15,11 @@ dotnet build CashMovements.sln --no-restore -c Release -m:1
 
 | Project | Responsibility at this checkpoint |
 |---|---|
-| Domain | Inner project reserved for business rules. |
-| UseCases | References Domain and will own transport-independent operations and outcomes. |
-| Infrastructure | EF Core SQL Server mappings, design-time context, migration and model snapshot. |
-| Grpc | ASP.NET Core host and generated server types for the versioned contract. |
-| UnitTests / IntegrationTests | Test project scaffolding. The executable database setup check is described below. |
-
-Inspect [the contract](src/CashMovements.Grpc/Protos/cashmovements/v1/cash_movements.proto) and [the EF model](src/CashMovements.Infrastructure/Persistence/CashMovementsDbContext.cs). To start the host shell after the Release build, run `dotnet run --no-build -c Release --project src/CashMovements.Grpc --launch-profile CashMovements.Grpc` or use its Rider launch profile. The HTTPS endpoint is `https://localhost:5001`. If Kestrel reports a missing development certificate, check with `dotnet dev-certs https --check` and create one with `dotnet dev-certs https`. RPC handlers will be connected in steps 3 and 4.
+| Domain | Identifier, timestamp, narration and money rules. Defines equality of canonical movements. |
+| UseCases | Validates input and exposes typed submission and balance outcomes through a persistence interface. |
+| Infrastructure | EF Core mappings and migration, atomic recording and duplicate recovery, SQL balance projection. |
+| Grpc | HTTP/2 host, protobuf mapping, typed error trailers and correlated outcome logs. |
+| UnitTests / IntegrationTests | Domain boundary cases and generated-client gRPC calls against a migrated SQL Server database. |
 
 ## Start and initialise Docker SQL Server
 
@@ -36,6 +34,36 @@ docker compose run --rm db-init
 The [Compose configuration](compose.yaml) runs SQL Server 2022 Developer and uses a named data volume. The one-shot initializer executes [bootstrap](db/bootstrap.sql), the [EF-generated schema](db/schema.sql) and [base seed](db/seed.sql) in that order. Bootstrap enables snapshot isolation on the `CashMovements` database. Rerun `docker compose run --rm db-init` to apply any missing migrations and seed keys. The standard seed includes `ACC-001` with a ZAR deposit and withdrawal totalling R12,249.50, plus empty `ACC-ZAR`, `ACC-JPY` and `ACC-BHD` accounts.
 
 The separate `docker compose run --rm db-init large-demo` fixture adds `ACC-DEMO`, a June 2024 opening deposit of R100.00 and 50,001 July movements. July closes at R100.50. This prepares data for the later statement stage.
+
+## Run and test submission and balance
+
+In the same PowerShell session, build the connection string from the local password. The builder quotes password characters such as semicolons correctly. Use the same host port as Compose.
+
+```powershell
+$sqlPort = if ($env:CASHMOVEMENTS_SQL_PORT) { $env:CASHMOVEMENTS_SQL_PORT } else { '14333' }
+$connection = [System.Data.Common.DbConnectionStringBuilder]::new()
+$connection.psbase.ConnectionString = "Server=tcp:127.0.0.1,$sqlPort;Database=CashMovements;User ID=sa;Encrypt=True;TrustServerCertificate=True"
+$connection['Password'] = $env:MSSQL_SA_PASSWORD
+$env:ConnectionStrings__CashMovements = $connection.psbase.ConnectionString
+$env:CASHMOVEMENTS_TEST_CONNECTION = $env:ConnectionStrings__CashMovements
+dotnet test CashMovements.sln --no-build -c Release
+dotnet run --no-build -c Release --project src/CashMovements.Grpc --launch-profile CashMovements.Grpc
+```
+
+The tests start their own HTTP/2 hosts and create, migrate and remove uniquely named test databases on the supplied SQL Server instance. Use a local Docker login with database creation rights. To run only the fast tests, use `dotnet test tests/CashMovements.UnitTests -c Release`.
+
+The Rider launch profile listens at `https://localhost:5001`. Supply `ConnectionStrings__CashMovements` in the host process environment when launching from Rider. If Kestrel needs a development certificate, run `dotnet dev-certs https`.
+
+To try both RPCs from a second PowerShell session, use the following commands from the repository root if you have `grpcurl`. The generated-client tests above exercise both calls without requiring a separate client tool. The `-insecure` option is for this loopback development certificate.
+
+```powershell
+$proto = 'src/CashMovements.Grpc/Protos'
+$file = 'cashmovements/v1/cash_movements.proto'
+'{"movement":{"accountId":"acc-zar","externalRef":"review/001","currency":"zar","amount":"125.5000","occurredAt":"2024-07-15T22:30:00Z","narration":"Review deposit"}}' | grpcurl -insecure -import-path $proto -proto $file -d '@' localhost:5001 cashmovements.v1.CashMovements/SubmitMovement
+'{"accountId":"acc-zar"}' | grpcurl -insecure -import-path $proto -proto $file -d '@' localhost:5001 cashmovements.v1.CashMovements/GetBalance
+```
+
+On a fresh base seed, the first call returns `SUBMISSION_DISPOSITION_RECORDED` with `ACC-ZAR`, `REVIEW/001`, `ZAR` and `125.50`. Repeating it yields `SUBMISSION_DISPOSITION_ALREADY_RECORDED` and the balance stays `125.50`. Changing just the narration on that key returns `ALREADY_EXISTS` with reason `CONFLICT` in the protobuf `cash-error-bin` trailer. The server returns a `trace-id` trailer for correlation. See the [contract](src/CashMovements.Grpc/Protos/cashmovements/v1/cash_movements.proto) and [end-to-end examples](tests/CashMovements.IntegrationTests/MovementRpcTests.cs).
 
 ## Inspect the database
 

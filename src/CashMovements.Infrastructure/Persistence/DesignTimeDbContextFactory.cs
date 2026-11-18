@@ -1,6 +1,3 @@
-using Microsoft.EntityFrameworkCore;
-using Microsoft.EntityFrameworkCore.Design;
-
 namespace CashMovements.Infrastructure.Persistence;
 
 public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<CashMovementsDbContext>
@@ -9,9 +6,9 @@ public sealed class DesignTimeDbContextFactory : IDesignTimeDbContextFactory<Cas
     {
         // Offline model generation needs a provider. Supply container credentials through
         // ConnectionStrings__CashMovements before applying migrations to a database.
-        var connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__CashMovements")
+        string connectionString = Environment.GetEnvironmentVariable("ConnectionStrings__CashMovements")
             ?? "Server=tcp:127.0.0.1,14333;Database=CashMovements;Encrypt=true;TrustServerCertificate=true";
-        var options = new DbContextOptionsBuilder<CashMovementsDbContext>()
+        DbContextOptions<CashMovementsDbContext> options = new DbContextOptionsBuilder<CashMovementsDbContext>()
             .UseSqlServer(connectionString)
             .Options;
         return new CashMovementsDbContext(options);

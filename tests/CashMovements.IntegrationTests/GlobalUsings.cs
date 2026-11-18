@@ -1,0 +1,24 @@
+global using System.Collections.Concurrent;
+global using System.Data;
+global using System.Data.Common;
+global using System.Globalization;
+global using System.Net;
+global using System.Threading.Channels;
+
+global using CashMovements.Grpc;
+global using CashMovements.Grpc.Contracts.V1;
+global using CashMovements.Infrastructure.Persistence;
+global using Google.Protobuf.WellKnownTypes;
+global using Grpc.Core;
+global using Grpc.Net.Client;
+global using Microsoft.AspNetCore.Builder;
+global using Microsoft.AspNetCore.Hosting;
+global using Microsoft.AspNetCore.Server.Kestrel.Core;
+global using Microsoft.Data.SqlClient;
+global using Microsoft.EntityFrameworkCore;
+global using Microsoft.EntityFrameworkCore.Diagnostics;
+global using Microsoft.Extensions.DependencyInjection;
+global using Microsoft.Extensions.Logging;
+global using Xunit;
+
+global using LedgerClient = CashMovements.Grpc.Contracts.V1.CashMovements.CashMovementsClient;

@@ -1,6 +1,6 @@
 # Cash Movements Service — approved implementation plan
 
-**Status.** The candidate approved the revised plan and its defaults on 18 November 2026. Steps 1 and 2 are complete and paused for review. The acceptance checklist covers the full assignment. See the [verification record](PLANNING.md#foundation-verification) for checks actually run.
+**Status.** The candidate approved the revised plan and its defaults on 18 November 2026. Steps 1–3 are complete. This checkpoint is ready for review after submission and current-balance verification. The acceptance checklist covers the full assignment. [Foundation verification](PLANNING.md#foundation-verification) · [Step 3 verification](PLANNING.md#step-3-verification)
 
 ## 1. Agreed scope and business rules
 
@@ -140,11 +140,11 @@ Cancel after several records, simulate a stream that fails after its final data 
 
 | Assessment requirement | Planned implementation and acceptance evidence |
 |---|---|
-| ☐ C#/.NET 8 modern service using gRPC and protobuf | Versioned three-RPC contract, `net8.0` host, clean CLI build and real gRPC calls in steps 1, 3 and 4. |
+| ☑ C#/.NET 8 modern service using gRPC and protobuf | Built the six-project solution. Verified both unary RPCs using the generated client over real HTTP/2. The statement RPC has a separate acceptance check below. |
 | ☑ SQL Server persistence, keys, schema and seed scripts | Verified in step 2 against a clean Docker database, including reruns with existing data and an independent EF migration comparison. |
-| ☐ Six movement fields, record a movement, retrieve current balance as a sum | Six-field write/read round trip, signed deposits and withdrawals, exact balance assertions in step 3. |
-| ☐ Per-account uniqueness, concurrent callers and differing duplicate fields | Database unique index, identical/mismatching race tests, documented conflict choice and per-account reuse. |
-| ☐ Focused automated tests for concurrency and balance math | Real SQL Server integration tests in step 3, including row-count and independent balance assertions. |
+| ☑ Six movement fields, record a movement, retrieve current balance as a sum | Verified canonical replies against all six SQL fields, signed sums, empty and unknown accounts, and totals wider than a movement. |
+| ☑ Per-account uniqueness, concurrent callers and differing duplicate fields | Verified both kinds of contested inserts on distinct SQL connections, changes to each recorded field, and reference reuse across accounts. |
+| ☑ Focused automated tests for concurrency and balance math | Passed against Docker SQL Server in step 3. Tests assert RPC outcomes, stored rows and balances. |
 | ☐ Ordered per-account date-range statement with running totals | Verify the opening header, ordered movements, snapshot consistency and closing for populated and empty periods in step 4. |
 | ☐ 50,000+ results without whole-result buffering at either endpoint | Server-streaming RPC, incremental generated client, large fixture, cancellation and memory-path checks. |
 | ☐ Error approach, assumptions and simplifications explained | Typed outcome/status mapping, negative/empty cases and documented decisions in SOLUTION. |

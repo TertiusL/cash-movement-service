@@ -1,0 +1,12 @@
+global using System.Diagnostics;
+global using CashMovements.Domain;
+global using CashMovements.Grpc;
+global using CashMovements.Grpc.Contracts.V1;
+global using CashMovements.Infrastructure.Persistence;
+global using CashMovements.UseCases;
+global using Google.Protobuf;
+global using Google.Protobuf.WellKnownTypes;
+global using Grpc.Core;
+global using Grpc.Core.Interceptors;
+global using Microsoft.EntityFrameworkCore;
+global using Microsoft.EntityFrameworkCore.Diagnostics;
