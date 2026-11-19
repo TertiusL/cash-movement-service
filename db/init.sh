@@ -2,8 +2,7 @@
 set -eu
 
 case "${1:-setup}" in
-    setup)      scripts=bootstrap.sql,schema.sql,seed.sql ;;
-    large-demo) scripts=bootstrap.sql,schema.sql,seed.sql,large-demo.sql ;;
+    setup|large-demo) scripts=bootstrap.sql,schema.sql,seed.sql,large-demo.sql ;;
     *) echo 'Use setup or large-demo.' >&2; exit 2 ;;
 esac
 

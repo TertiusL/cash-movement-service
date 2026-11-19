@@ -1,6 +1,8 @@
 # Cash Movements Service
 
-**Step 5 checkpoint.** The service implements movement submission, current balances and streaming statements against SQL Server in Docker. The console client consumes the statement RPC to produce a local CSV. [Run the client](README.md#export-a-statement-to-csv) · [Export verification](PLANNING.md#step-5-verification)
+The service records cash movements, calculates balances and streams statements from SQL Server in Docker. A console client consumes the statement RPC and publishes a local CSV. [Run the client](README.md#export-a-statement-to-csv) · [Export verification](PLANNING.md#step-5-verification)
+
+[AI assistance record](PLANNING.md#ai-assistance-record) · [Assessment checklist](IMPLEMENTATION_PLAN.md#9-mandatory-requirement-checklist)
 
 ## Design decisions agreed during planning
 
@@ -27,10 +29,10 @@ Callers resolve local movement times and both ends of a local reporting period i
 | Submission | Business outcome | Effect on the ledger |
 |---|---|---|
 | First valid submission for a new key | `Recorded` | Store one movement and count its signed amount once. |
-| Same key and equivalent amount, currency, occurrence time and narration | `AlreadyRecorded` (success) | Return success with the original movement and balance unchanged. |
+| Same key and equivalent amount, currency, occurrence time and narration | `AlreadyRecorded` (success) | Return the original movement. The retry has no effect on the balance. |
 | Same key and a difference in any of those four fields on an otherwise valid submission | `Conflict` | Preserve the original movement and balance. |
 
-Narration appears on statements. Accepting a changed description as a successful retry would mislead the caller about what an operator will read. Corrections and updates to recorded movements are outside the scope of this service.
+`SubmitMovement` returns the disposition and canonical movement for both successes. Call `GetBalance` to retrieve the current account balance. Narration appears on statements, so a changed description on a retry yields a conflict. Corrections and updates to recorded movements are outside the scope of this service.
 
 **Interpretation of the brief.** We interpret “record cash movements” as entering events that have already occurred. This assumption supports accepting a negative recorded balance and recording each reported side of a transfer independently.
 
@@ -66,9 +68,11 @@ Two exact alternatives are a structured money message carrying a signed integer 
 
 **Statement framing.** Send a single leading header with canonical account ID, currency, UTC start (inclusive), UTC end (exclusive) and opening balance from movements before the start. Stream zero or more movements with their after-movement balances from the same SQL snapshot. On gRPC `OK`, closing equals the last running balance, or the header's opening for a period with no movements. The CSV takes its opening from the header, counts only movements and writes its closing only after successful completion. An empty period can therefore show the same nonzero balance at both ends.
 
+**Known timestamp limit.** Submission accepts a movement at the final UTC tick, `9999-12-31T23:59:59.9999999Z`. It contributes to the current balance. Every valid statement end is at or before that tick, and the end is exclusive, so the movement cannot appear in a statement. The live regression reproduced this limit. [Verification](PLANNING.md#final-rider-regression)
+
 ## Agreed identifier format
 
-**Format.** Both `accountId` and `externalRef` accept ASCII letters, digits, hyphens (`-`), underscores (`_`) and forward slashes (`/`). Each identifier must contain at least one ASCII letter or digit. Reject whitespace anywhere and all characters outside this set. Validate the original input, then convert ASCII letters to uppercase for storage, output and lookup. Preserve punctuation and leading zeros exactly.
+**Format.** Both `accountId` and `externalRef` accept ASCII letters, digits, hyphens (`-`), underscores (`_`) and forward slashes (`/`). Account IDs can contain up to 64 characters and external references up to 128. Each identifier must contain at least one ASCII letter or digit. Reject whitespace anywhere and all characters outside this set. Validate the original input, then convert ASCII letters to uppercase for storage, output and lookup. Preserve punctuation and leading zeros exactly.
 
 **Rationale and trade-off.** The brief gives examples and requires movement references to be unique per account. It leaves identifier format and case sensitivity unspecified. A caller retrying `stmt/1004/08` as `STMT/1004/08` on the same account addresses the same movement, which prevents a casing change from posting cash twice. Supporting slashes and underscores accommodates references such as `STMT/1004/08` and `STMT_1004/08`. Those two references remain distinct. Only the uppercase spelling is retained. An upstream system that distinguishes identifiers solely by case or uses unsupported characters cannot use those identifiers as issued.
 
@@ -83,7 +87,7 @@ The candidate approved both comparison rules. Each comparison must give the same
 | Field | Agreed rule and rationale |
 |---|---|
 | `occurredAt` precision | Use 100-nanosecond resolution. Accept instants exactly representable at that resolution and reject values that would lose precision on conversion. An otherwise identical retry differing by one tick yields `Conflict`. |
-| `narration` | Preserve the submitted text and compare it ordinally. Case, whitespace, line endings and Unicode representation are significant. A trailing space changes the statement text and therefore produces a conflict. |
+| `narration` | Require at least one non-whitespace character and at most 256 UTF-16 code units. Preserve the accepted text and compare it ordinally. Case, whitespace, line endings and Unicode representation are significant. A trailing space changes the statement text and therefore produces a conflict. |
 
 Protobuf timestamps can express nanoseconds. The agreed 100-nanosecond precision matches a .NET tick and can be stored exactly in SQL Server using UTC with `datetime2(7)`. [Protobuf Timestamp](https://protobuf.dev/reference/protobuf/google.protobuf/#timestamp) · [.NET ticks](https://learn.microsoft.com/en-us/dotnet/api/system.datetime.ticks?view=net-8.0) · [SQL Server datetime2](https://learn.microsoft.com/en-us/sql/t-sql/data-types/datetime2-transact-sql?view=sql-server-ver17)
 

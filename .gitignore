@@ -28,7 +28,8 @@ artifacts/
 .artifacts/
 
 # Statement exports, including interrupted runs
-exports/
+**/exports/*
+!/exports/.gitkeep
 *.csv
 *.csv.partial
 *.csv.*.partial

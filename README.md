@@ -1,155 +1,148 @@
 # Cash Movements Service
 
-This .NET 8 gRPC service records cash movements, retrieves current balances and streams account statements from SQL Server.
+**Assessment video.** The recording is in the repository root. Download [Assessment.mp4](Assessment.mp4) from GitHub or open it directly from your clone.
 
-## Build on Windows
+A .NET 8 gRPC service for recording cash movements, checking account balances and streaming statements. SQL Server runs in Docker. The API runs in your IDE.
 
-Open `CashMovements.sln` in Rider or run the following from the repository root in PowerShell. Use .NET SDK 8.0.428 (pinned by `global.json`) and Docker Desktop with Linux containers. The first restore downloads the pinned NuGet dependencies and the local EF tool. SQL Server runs in Docker.
+## 1. Clone and configure
 
-```powershell
-dotnet --version
-dotnet tool restore
-dotnet restore CashMovements.sln
-dotnet build CashMovements.sln --no-restore -c Release -m:1
+Clone [the repository](https://github.com/TertiusL/cash-movement-service) using your IDE or Git client. Install the pinned **.NET SDK 8.0.428** if needed, and start **Docker Desktop** in Linux containers mode.
+
+Create these two local files in the checkout. Replace `YOUR_PASSWORD` in both with the **same** local SQL Server password. For a new database we recommend a random password of 16 or more characters using uppercase letters, lowercase letters and digits. If you already have a database volume, use its existing password. Both files are ignored by Git. [SQL Server password requirements](https://learn.microsoft.com/en-us/sql/linux/sql-server-linux-configure-environment-variables#use-with-initial-setup)
+
+**`.env`** — next to `CashMovements.sln`, for Docker Compose
+
+```dotenv
+MSSQL_SA_PASSWORD=YOUR_PASSWORD
 ```
 
-| Project | Responsibility at this checkpoint |
-|---|---|
-| Domain | Identifier, timestamp, narration and money rules. Defines equality of canonical movements. |
-| UseCases | Validates inputs and exposes typed submission, balance and statement results. |
-| Infrastructure | EF Core mappings, atomic recording and duplicate recovery, SQL aggregates and snapshot-based statement reads. |
-| Grpc | HTTP/2 host, protobuf mapping, incremental statement writes, typed error trailers and correlated outcome logs. |
-| StatementClient | Reads the statement RPC one frame at a time and writes a local CSV with progress and Ctrl+C support. |
-| UnitTests / IntegrationTests | Domain boundary cases and generated-client gRPC calls against a migrated SQL Server database. |
+**`src/CashMovements.Grpc/appsettings.Development.json`** — in the API project, for the IDE's Debug launch
 
-## Start and initialise Docker SQL Server
+```json
+{
+  "ConnectionStrings": {
+    "CashMovements": "Server=tcp:127.0.0.1,14333;Database=CashMovements;User ID=sa;Password=YOUR_PASSWORD;Encrypt=True;TrustServerCertificate=True"
+  }
+}
+```
 
-Choose a strong local password and keep it available for subsequent sessions using this volume. Set it in the current PowerShell process at the prompt. Compose uses the environment variable for local database setup. The default host binding is `127.0.0.1:14333`; set `CASHMOVEMENTS_SQL_PORT` before startup if you need another port.
+## 2. Start and seed SQL Server
 
-```powershell
-$env:MSSQL_SA_PASSWORD = [System.Net.NetworkCredential]::new('', (Read-Host 'Local SQL Server password' -AsSecureString)).Password
-docker compose up -d --wait db
+Run this from the repository root. If you previously set `$env:MSSQL_SA_PASSWORD` in this PowerShell terminal, first run `Remove-Item Env:MSSQL_SA_PASSWORD -ErrorAction SilentlyContinue` so Compose reads the password from `.env`. Continue to Debug once the seed command exits successfully.
+
+```shell
 docker compose run --rm db-init
 ```
 
-The [Compose configuration](compose.yaml) runs SQL Server 2022 Developer and uses a named data volume. The one-shot initializer executes [bootstrap](db/bootstrap.sql), the [EF-generated schema](db/schema.sql) and [base seed](db/seed.sql) in that order. Bootstrap enables snapshot isolation on the `CashMovements` database. Rerun `docker compose run --rm db-init` to apply any missing migrations and seed keys. The standard seed includes `ACC-001` with a ZAR deposit and withdrawal totalling R12,249.50, plus empty `ACC-ZAR`, `ACC-JPY` and `ACC-BHD` accounts.
+The command starts SQL Server, creates the database and schema, and seeds both statement examples. On a fresh database, `ACC-001` holds **12,249.50 ZAR** across two movements. The busy account, `ACC-DEMO`, has a June opening deposit and **50,001 movements in July 2024**. The three accounts for trying submissions (`ACC-ZAR`, `ACC-JPY` and `ACC-BHD`) start at zero.
 
-The separate `docker compose run --rm db-init large-demo` fixture adds `ACC-DEMO`, a June 2024 opening deposit of R100.00 and 50,001 July movements. July closes at R100.50.
+If you ran an earlier version of setup, rerun the same command to add the busy account. Existing movements are preserved.
 
-## Run and test submission and balance
+To run automated tests now, go to [test database setup](#tests-and-design-notes). The integration tests start their own API.
 
-In the same PowerShell session, build the connection string from the local password. The builder quotes password characters such as semicolons correctly. Use the same host port as Compose.
+### Optional clean reset of the local database
+
+**This permanently deletes all data in this Compose project's SQL Server volume, including movements you submitted.** For a clean setup, stop the API debugger and check that the passwords in `.env` and `src/CashMovements.Grpc/appsettings.Development.json` match.
+
+Run these commands from the repository root in the same PowerShell terminal. They clear the terminal's password override, remove the project's containers and data volume, then create and seed a fresh database using `.env`.
 
 ```powershell
-$sqlPort = if ($env:CASHMOVEMENTS_SQL_PORT) { $env:CASHMOVEMENTS_SQL_PORT } else { '14333' }
-$connection = [System.Data.Common.DbConnectionStringBuilder]::new()
-$connection.psbase.ConnectionString = "Server=tcp:127.0.0.1,$sqlPort;Database=CashMovements;User ID=sa;Encrypt=True;TrustServerCertificate=True"
-$connection['Password'] = $env:MSSQL_SA_PASSWORD
-$env:ConnectionStrings__CashMovements = $connection.psbase.ConnectionString
-$env:CASHMOVEMENTS_TEST_CONNECTION = $env:ConnectionStrings__CashMovements
-dotnet test CashMovements.sln --no-build -c Release
-dotnet run --no-build -c Release --project src/CashMovements.Grpc --launch-profile CashMovements.Grpc
+Remove-Item Env:MSSQL_SA_PASSWORD -ErrorAction SilentlyContinue
+docker compose down --volumes
+docker compose run --rm db-init
 ```
 
-The tests start their own HTTP/2 hosts and create, migrate and remove uniquely named test databases on the supplied SQL Server instance. Use a local Docker login with database creation rights. To run only the fast tests, use `dotnet test tests/CashMovements.UnitTests -c Release`.
+Once seeding succeeds, start Debug again. The `GetBalance` example in step 4 should return `12249.50` ZAR for `ACC-001`.
 
-The Rider launch profile listens at `https://localhost:5001`. Supply `ConnectionStrings__CashMovements` in the host process environment when launching from Rider. If Kestrel needs a development certificate, run `dotnet dev-certs https`.
 
-To try both RPCs from a second PowerShell session, use the following commands from the repository root if you have `grpcurl`. The generated-client tests above exercise both calls without requiring a separate client tool. The `-insecure` option is for this loopback development certificate.
+## 3. Debug the API
 
-```powershell
-$proto = 'src/CashMovements.Grpc/Protos'
-$file = 'cashmovements/v1/cash_movements.proto'
-'{"movement":{"accountId":"acc-zar","externalRef":"review/001","currency":"zar","amount":"125.5000","occurredAt":"2024-07-15T22:30:00Z","narration":"Review deposit"}}' | grpcurl -insecure -import-path $proto -proto $file -d '@' localhost:5001 cashmovements.v1.CashMovements/SubmitMovement
-'{"accountId":"acc-zar"}' | grpcurl -insecure -import-path $proto -proto $file -d '@' localhost:5001 cashmovements.v1.CashMovements/GetBalance
+Open [CashMovements.sln](CashMovements.sln) in your .NET IDE. Select **CashMovements.Grpc** as the startup project, choose its **CashMovements.Grpc** launch profile and start **Debug**. The IDE restores packages and builds the project.
+
+Look for **`Now listening on: https://localhost:5001`** in the run output. This is the gRPC address for all three methods. If the local HTTPS development certificate needs to be trusted, run `dotnet dev-certs https --trust` once and accept the prompt.
+
+
+## 4. Try a request
+
+Use any gRPC client with the [protobuf contract](src/CashMovements.Grpc/Protos/cashmovements/v1/cash_movements.proto). To try it in **Postman Desktop**, follow these steps.
+
+1. Select **New → gRPC**, enter `localhost:5001` and enable **TLS** (the lock icon).
+2. Under **Service definition**, choose **Import a .proto file** and open `src/CashMovements.Grpc/Protos/cashmovements/v1/cash_movements.proto`.
+3. Choose a method under **CashMovements**, paste its JSON into **Message** and click **Invoke**. For a balance check, choose **GetBalance** and use the message below. You can also go straight to either [statement example](#stream-a-statement).
+
+```json
+{"account_id":"ACC-001"}
 ```
 
-On a fresh base seed, the first call returns `SUBMISSION_DISPOSITION_RECORDED` with `ACC-ZAR`, `REVIEW/001`, `ZAR` and `125.50`. Repeating it yields `SUBMISSION_DISPOSITION_ALREADY_RECORDED` and the balance stays `125.50`. Changing just the narration on that key returns `ALREADY_EXISTS` with reason `CONFLICT` in the protobuf `cash-error-bin` trailer. The server returns a `trace-id` trailer for correlation. See the [contract](src/CashMovements.Grpc/Protos/cashmovements/v1/cash_movements.proto) and [end-to-end examples](tests/CashMovements.IntegrationTests/MovementRpcTests.cs).
+On the fresh seed, expect account `ACC-001`, currency `ZAR` and balance `"12249.50"`. [Postman gRPC guide](https://learning.postman.com/docs/use/send-requests/protocols/grpc/using-service-definition)
 
-## Stream a statement
+### Try SubmitMovement
 
-With the base seed loaded and the host running, use `grpcurl` from a second PowerShell session in the repository root to request just 16 July for `ACC-001`.
+With an unused reference on `ACC-ZAR`, send this twice. The first call records the movement and the second returns `SUBMISSION_DISPOSITION_ALREADY_RECORDED`. The balance increases only once. Change the narration and resend to see a conflict (`ALREADY_EXISTS`).
 
-```powershell
-'{"accountId":"acc-001","fromInclusive":"2024-07-16T00:00:00Z","toExclusive":"2024-07-17T00:00:00Z"}' | grpcurl -insecure -import-path src/CashMovements.Grpc/Protos -proto cashmovements/v1/cash_movements.proto -d '@' localhost:5001 cashmovements.v1.CashMovements/ExportStatement
+```json
+{"movement":{"account_id":"ACC-ZAR","external_ref":"REVIEW/001","currency":"ZAR","amount":"125.50","occurred_at":"2024-07-15T22:30:00Z","narration":"Review deposit"}}
 ```
 
-On the base seed, the header gives the canonical account, currency, requested UTC bounds and an opening balance of `12500.00`. The next frame carries the `-250.50` withdrawal and a running balance of `12249.50`. Successful end-of-stream confirms that closing balance. A range with no movements emits just the header and closes at its opening balance. A non-OK terminal status indicates an incomplete export even when the client has received rows.
 
-To run only the statement checks after building and setting `CASHMOVEMENTS_TEST_CONNECTION`, use the following command. The generated client reads incrementally over loopback HTTP/2. The tests load the large fixture into a disposable database.
+### Stream a statement
 
-```powershell
-dotnet test tests/CashMovements.IntegrationTests --no-build -c Release --filter 'FullyQualifiedName~Statement'
+Select **ExportStatement** in Postman and invoke either request first. Both use accounts from the initial seed.
+
+**Small account · 16 July 2024.** Expect a header with opening balance `12500.00`, followed by one withdrawal of `-250.50`. The closing balance is `12249.50`.
+
+```json
+{"account_id":"ACC-001","from_inclusive":"2024-07-16T00:00:00Z","to_exclusive":"2024-07-17T00:00:00Z"}
+```
+
+**Busy account · first two minutes of July.** Expect a header with opening balance `100.00`, then 120 movements alternating between `-1.00` and `1.00`. The last running balance is `100.00`.
+
+```json
+{"account_id":"ACC-DEMO","from_inclusive":"2024-07-01T00:00:00Z","to_exclusive":"2024-07-01T00:02:00Z"}
 ```
 
 ## Export a statement to CSV
 
-From the repository root, use the PowerShell session where you set the SQL password and connection string. Load the demo fixture, trust the local ASP.NET development certificate, and start the Release host. If the host is already running, keep it running and load the fixture in a session with the same Compose settings.
+### Optional console client
 
-```powershell
-docker compose run --rm db-init large-demo
-dotnet dev-certs https --trust
-dotnet run --no-build -c Release --project src/CashMovements.Grpc --launch-profile CashMovements.Grpc
+For the **full July stream**, use the console client. Postman displays each message in a timeline and can run out of memory displaying all 50,001 movements. The console client writes each movement to disk as it arrives. You can run it immediately after setup, before or after the Postman examples.
+
+Keep the API running and run this command from the repository root. It writes `july.csv` to the included [exports folder](exports/) next to the solution. Git ignores generated exports.
+
+```shell
+dotnet run --project src/CashMovements.StatementClient -- --endpoint https://localhost:5001 --account ACC-DEMO --from 2024-07-01T00:00:00Z --to 2024-08-01T00:00:00Z --output exports/july.csv
 ```
 
-In **a second PowerShell terminal**, start in the repository root. The client needs only the gRPC endpoint. The following command writes to `exports\july.csv` under the current directory.
+Watch the progress count and open **`exports/july.csv`** after success. July opens at `100.00`, has 50,001 movement records and closes at `100.50`. Ctrl+C cancels the export. An interrupted write leaves a file ending in `.partial`. Use a new filename for each completed export.
+
+Client exit codes are **0** for a published CSV, **1** for export failure, **2** for invalid arguments and **130** for cancellation.
+
+
+## Tests and design notes
+
+`CashMovements.UnitTests` runs without Docker or a connection string. For `CashMovements.IntegrationTests`, complete steps 1 and 2 and leave Docker SQL Server running. The test runner is a separate process. It reads **`CASHMOVEMENTS_TEST_CONNECTION`** from its own environment.
+
+### Run the tests from PowerShell
+
+Open PowerShell in the repository root, either in a standalone window or in your IDE's terminal. Run all three lines in the **same session**. They read the connection string from step 1, pass it to the test process and run the full solution.
 
 ```powershell
-New-Item -ItemType Directory -Force -Path .\exports | Out-Null
-dotnet run --no-build -c Release --project src/CashMovements.StatementClient -- --endpoint https://localhost:5001 --account ACC-DEMO --from 2024-07-01T00:00:00Z --to 2024-08-01T00:00:00Z --output .\exports\july.csv
-if ($LASTEXITCODE -eq 0) { Get-Item .\exports\july.csv | Select-Object FullName, Length }
+$settings = Get-Content -Raw -LiteralPath .\src\CashMovements.Grpc\appsettings.Development.json | ConvertFrom-Json
+$env:CASHMOVEMENTS_TEST_CONNECTION = $settings.ConnectionStrings.CashMovements
+dotnet test CashMovements.sln -c Release
 ```
 
-The client reports movement counts and elapsed time on stderr. July should show **50,001 movements**, opening `100.00`, first movement `DEMO-1` for `-1.00` with running balance `99.00`, and closing `100.50`. Use August to see an empty period with that closing carried forward.
+### Run the tests from an IDE
 
-```powershell
-dotnet run --no-build -c Release --project src/CashMovements.StatementClient -- --endpoint https://localhost:5001 --account ACC-DEMO --from 2024-08-01T00:00:00Z --to 2024-09-01T00:00:00Z --output .\exports\august.csv
-if ($LASTEXITCODE -eq 0) { Get-Content .\exports\august.csv }
-```
+1. In your IDE's **test run configuration**, add an environment variable named `CASHMOVEMENTS_TEST_CONNECTION`. The API's Debug profile and the test runner have separate environments.
+2. For its value, open your local `src/CashMovements.Grpc/appsettings.Development.json` and copy the entire `ConnectionStrings` → `CashMovements` value, including the SQL port, password and semicolons. Omit the surrounding JSON quotes and save the setting locally.
+3. Start a new test run for `CashMovements.IntegrationTests` or the full solution. If your IDE has no test environment editor, use the PowerShell commands above.
 
-The CSV columns are `recordType,accountId,externalRef,currency,amount,occurredAt,narration,runningBalance`. The `opening` and `closing` records use only account, currency and running balance. Each `movement` contains the six recorded fields and its running balance. August has an opening and closing of `100.50` with no movement records. The file uses UTF-8 and CRLF. Commas, quotes and embedded line breaks in narration are escaped, so use a CSV parser to count logical records. Request bounds require an explicit UTC designator or offset. The start is inclusive and the end is exclusive.
+**What happens to the database?** The fixture connects to `master`, creates a uniquely named `CashMovements_Test_...` database, applies migrations and drops that database during cleanup. The local Docker `sa` login from step 1 has the required permissions. Your seeded `CashMovements` data stays available for manual testing.
 
-Press **Ctrl+C** during an export to cancel. While writing, the client uses a unique sibling such as `july.csv.<run-id>.partial`. After an interruption or failure, it reports the partial path if a file was created. To find these files, run `Get-ChildItem .\exports -Filter '*.partial'`. Only a successful stream, file close and rename produce the completed filename and success message. A retry starts a new snapshot. Choose a fresh output name if the intended destination already exists.
+**If setup fails**
 
-PowerShell exposes the client's process exit code in `$LASTEXITCODE`. The names come from [ClientExitCodes.cs](src/CashMovements.StatementClient/ClientExitCodes.cs).
+- `Set CASHMOVEMENTS_TEST_CONNECTION` means the test process did not receive the variable. Set it in the IDE's test run configuration if you launch tests there, or in the same terminal where you run `dotnet test`.
+- `Login failed for user 'sa'` means SQL Server rejected the login. Check that the test connection string uses the working password for this Docker volume and the host port shown by `docker compose port db 1433`.
 
-| Exit code | Constant | Meaning |
-|---:|---|---|
-| `0` | `Success` | The stream completed and the client published the CSV at the requested path. |
-| `1` | `ExportFailure` | The export failed, for example during the gRPC call, a file write or the final rename. |
-| `2` | `InvalidArguments` | The client rejected the command-line arguments before starting the export. |
-| `130` | `Cancelled` | The caller cancelled the export, for example with Ctrl+C. |
-
-## Inspect the database
-
-In Rider's Database window, add a Microsoft SQL Server data source for host `127.0.0.1`, port `14333`, database `CashMovements`, user `sa` and the local password. Trust the local container certificate for this development connection. Expand `dbo` to see the tables, composite currency foreign key and the unique index on `(AccountId, ExternalRef)`.
-
-Alternatively, run the inspection query with the container's own SQL client from the same PowerShell session:
-
-```powershell
-$env:SQLCMDPASSWORD = $env:MSSQL_SA_PASSWORD
-docker compose exec -T -e SQLCMDPASSWORD db /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -d CashMovements -Q "SELECT a.AccountId, a.Currency, COUNT(m.MovementId) AS Movements, COALESCE(SUM(m.Amount),0) AS Balance FROM dbo.Accounts AS a LEFT JOIN dbo.Movements AS m ON m.AccountId=a.AccountId GROUP BY a.AccountId,a.Currency ORDER BY a.AccountId"
-docker compose exec -T -e SQLCMDPASSWORD db /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -d CashMovements -Q "SELECT * FROM dbo.__EFMigrationsHistory"
-```
-
-Stop the local environment with `docker compose down`. The named volume retains your data.
-
-## Verify or regenerate the schema
-
-After a Release build and `dotnet tool restore`, run the isolated database setup check:
-
-```powershell
-.\tools\Verify-DatabaseSetup.ps1
-```
-
-The check uses its own Docker Compose project, port 14433 and a disposable database volume. Use `-Port` to choose a different free port. It compares the scripted schema with the EF migrations, upgrades the original schema with an existing posting, reruns both seed modes and removes its disposable resources on exit. [Foundation verification](PLANNING.md#foundation-verification) · [Statement and upgrade verification](PLANNING.md#step-4-verification)
-
-EF migrations in Infrastructure are the schema source of truth. From the root, regenerate the committed SQL after an intentional migration change:
-
-```powershell
-dotnet ef migrations script --idempotent --project src/CashMovements.Infrastructure --startup-project src/CashMovements.Infrastructure --output db/schema.sql
-```
-
-Design-time script generation works offline once dependencies are restored. For an explicit EF database update, supply a connection string to the Docker instance via `ConnectionStrings__CashMovements`. For normal local setup use the Compose initializer above.
-
-[Approved implementation plan](IMPLEMENTATION_PLAN.md) · [Design decisions and trade-offs](SOLUTION.md) · [AI assistance and verification history](PLANNING.md)
+[Design decisions and trade-offs](SOLUTION.md) · [Requirements and verification](IMPLEMENTATION_PLAN.md) · [AI assistance record](PLANNING.md#ai-assistance-record) · [Narrated demo script](DEMO_SCRIPT.md)

@@ -1,6 +1,17 @@
 # Planning notes
 
-The [approved implementation plan](IMPLEMENTATION_PLAN.md) consolidates the agreed rules, approved defaults, build sequence and assessment checklist. This file retains the decision and verification history.
+## AI assistance record
+
+The candidate set the scope, revised the design and approved the implementation milestones. The AI assistant proposed alternatives, wrote the implementation and tests for the approved stages, and ran the checks reported below. Blockquotes are selected verbatim excerpts of the candidate's original messages. The decision table and milestone notes are summaries. Verification tables record observed results. The earlier lists headed *Planned checks* describe intentions at the time. [Approved implementation plan](IMPLEMENTATION_PLAN.md)
+
+| Stage | Where to find the prompt, decision and evidence |
+|---|---|
+| Planning | [Decision history](#decision-history), [original prompt excerpts](#prompts-from-the-candidate) and [changes requested before coding](#plan-revisions-before-implementation) |
+| Steps 1–2 | [SQL Server in Docker, schema, seed reruns and source inspection](#foundation-verification) |
+| Step 3 | [Movement submission, balances and the two-connection test](#step-3-verification) · [Amount transport and coding-convention review](#step-3-review-follow-up) |
+| Step 4 | [Snapshot streaming, backdated writes and the measured index change](#step-4-verification) |
+| Step 5 | [CSV publication, cancellation and the exit-code review](#step-5-verification) |
+| Handoff | [Clean-checkout rehearsal](#final-handoff-rehearsal) · [Busy account in the default seed](#busy-account-in-the-default-seed) · [Manual verification and recording readiness](#recording-readiness) |
 
 ## Decision history
 
@@ -78,9 +89,17 @@ Selected verbatim excerpts from the planning conversation, in order.
 
 > Ensure an empty period still exposes its opening and closing balances from the same snapshot. Update the CSV design and tests consistently.
 
+### Plan revisions before implementation
+
+> Remove the proposed BigInteger/text-based aggregate machinery.
+
+> Label recording already-occurring movements as a documented interpretation supporting our negative-balance and transfer decisions.
+
+**AI proposal and candidate revision (summary).** The earlier plan proposed extra machinery for large totals. The candidate chose standard C# `decimal` arithmetic with an explicit supported aggregate range and errors on overflow or precision loss. In the same review, the candidate requested a header with the opening balance even for an empty period, and asked that ZAR, JPY and BHD be identified as implementation choices. The candidate approved the revised plan before coding began. The resulting precision-limit and empty-period tests are recorded under [movement and balance verification](#step-3-verification) and [statement verification](#step-4-verification).
+
 ## Verification record
 
-During planning the assistant read the three-page assessment and checked the documented precision of protobuf timestamps, .NET ticks and SQL Server timestamps stored as `datetime2(7)`. The references are in [SOLUTION.md](SOLUTION.md#agreed-field-comparison). Service behaviour is scheduled for the later implementation stages.
+During planning the assistant read the three-page assessment and checked the documented precision of protobuf timestamps, .NET ticks and SQL Server timestamps stored as `datetime2(7)`. The references are in [SOLUTION.md](SOLUTION.md#agreed-field-comparison). At that point service verification was still planned.
 
 Two published contracts illustrate why casing depends on the field's purpose. IATA's Simplified Invoicing and Settlement guide makes invoice numbers case-insensitive for duplicate checks. AWS documents a case-sensitive client token for idempotency on its payment operation. The IATA example more closely resembles a reference entered by an operator. [IATA SIS User Guide, Invoice Number](https://www.iata.org/globalassets/iata/services/financial-services/sis/support-docs/sis_member_user_guide.pdf) · [AWS ProcessPayment request](https://docs.aws.amazon.com/sdkfornet/v4/apidocs/items/BedrockAgentCore/TProcessPaymentRequest.html)
 
@@ -120,9 +139,13 @@ The candidate approved the remaining defaults, including timestamp precision, ha
 
 On 18 November 2026 the candidate approved the revised plan and requested implementation of the foundation with SQL Server in Docker.
 
+> Begin with implementation steps 1 and 2: solution structure, project dependencies, protobuf contract, SQL Server container setup, EF Core mappings/migrations, and schema/seed scripts.
+
 > Build the solution and verify database setup works from a clean database and can be rerun without damaging existing data. Record what was actually verified.
 
 The assistant created the four service projects, two test project shells, versioned protobuf, EF Core model and migration, Docker setup, SQL scripts and review instructions. The SQL setup verification runs independently of the later service tests.
+
+**Candidate review (summary).** When Rider showed the projects and their dependencies, the candidate asked to see the exact solution path, handwritten C# and protobuf files, and how the projects included them before any Git work. The candidate then approved the foundation. For later milestones the candidate requested a clickable file-by-file guide in request order, with tests and documentation listed separately.
 
 | Check run | Observed result |
 |---|---|
@@ -140,7 +163,11 @@ The verifier removed its own temporary Compose project, container, network and v
 
 ## Step 3 verification
 
-On 18 November 2026 the candidate asked for movement submission and SQL Server evidence, followed by a file-by-file review. The instruction “Complete any other work explicitly included in step 3, without moving into later steps” also covers `GetBalance`. The assistant implemented both unary operations, their error and logging policy, and the tests. The candidate's agreed business rules determined validation and retry precedence.
+> Implement movement submission, including validation, identifier/currency normalisation, account checks and duplicate handling.
+
+> Invalid submissions do not create movements or consume an unused reference.
+
+**Candidate direction and AI implementation (summary).** On 18 November 2026 the candidate requested SQL Server evidence for recording, concurrent retries, conflicts and invalid submissions, followed by a file-by-file review. The approved step also included `GetBalance`. The assistant implemented both unary operations, their typed errors, logging and tests. The candidate's agreed business rules determined validation and retry precedence.
 
 The assistant suggested a test-only EF command interceptor to pause requests immediately before their competing inserts. At that point both callers have finished their lookups. The tests assert that the two SQL connection IDs differ and check the resulting row using an independent SQL query. A separate probe supplies synthetic large numeric inputs to the production balance projection to reach the aggregate limits with a small fixture.
 
@@ -153,13 +180,15 @@ The assistant suggested a test-only EF command interceptor to pause requests imm
 | Current balance and transfer retries | Verified empty, negative and zero balances for ZAR, JPY and BHD, including fractional minor-unit rejections. Two maximum BHD movements produced exactly 1999999999999999.998. Synthetic wide SQL sums for both signs passed immediately inside 10²⁴ and returned typed `OUT_OF_RANGE` at the limit. Both independent transfer retry histories produced one debit and one credit, with balances of −200 and +200 on their respective accounts. |
 | Error mapping and logs | A real SQL command timeout returned `UNAVAILABLE`. An injected unexpected provider failure returned a safe `INTERNAL` response and one correlated diagnostic error. Client cancellation reached the EF command token, logged at debug level and allowed the next call to succeed. A normal recording logged its operation, outcome and trace and omitted the submitted amount and narration. |
 
-Reproduction instructions are in the [README](README.md#run-and-test-submission-and-balance). The optional manual `grpcurl` examples were not executed in this environment. The automated client exercised the same two RPCs. Statement reads and running arithmetic remain scheduled for step 4.
+The current [README](README.md#4-try-a-request) shows both calls. At this milestone, the automated client exercised both RPCs. The optional manual `grpcurl` examples were not executed. Statement reads and running arithmetic were scheduled for step 4.
 
 ### Step 3 review follow-up
 
 > We deliberately represent amounts as decimal strings in protobuf because protobuf has no built-in decimal scalar.
 
 > Read AGENTS.md and apply its coding conventions to the current handwritten implementation.
+
+> Preserve behaviour and contracts. Build and run the relevant existing tests, then provide the file-by-file review handoff. Do not commit or push yet.
 
 The candidate confirmed the existing amount representation and asked to record its alternatives and trade-off. The assistant documented that decision and traced a submission from the wire string through its single conversion to C# `decimal` and the SQL movement column. The [amount transport decision](SOLUTION.md#agreed-amount-transport) includes examples for ZAR, JPY and BHD.
 
@@ -169,11 +198,15 @@ On 18 November 2026, `dotnet build CashMovements.sln --no-restore -c Release -m:
 
 The existing `tools/Verify-DatabaseSetup.ps1 -Port 14533` verifier also passed. It compared the scripted schema with an independent EF migration, checked database constraints and confirmed that both the base seed and the 50,001-entry July fixture preserved existing data on rerun. Both Docker verification runs removed their disposable containers, networks and volumes.
 
+**Candidate approval (summary).** The candidate approved the implementation and coding-convention changes after review and authorised the commit and push. The assistant's check results above apply to that version.
+
 ## Step 4 verification
 
 On 18 November 2026 the candidate requested statement streaming and specified the consistency and memory requirements:
 
 > Stream the statement header/opening balance and ordered movements from one consistent SQL snapshot. Preserve bounded memory use without buffering the entire result.
+
+> Verify opening and running balances, date boundaries, deterministic ordering, empty periods with a nonzero opening balance, concurrent backdated writes, 50,001 movements and cancellation against SQL Server.
 
 The assistant implemented the existing server-streaming contract and used the generated client to verify it over loopback HTTP/2 against Docker SQL Server 2022 Developer. The client consumed one frame at a time. The selected console CSV client is step 5.
 
@@ -199,9 +232,15 @@ The assistant implemented the existing server-streaming contract and used the ge
 
 **Commands run.** Built with `dotnet build CashMovements.sln --no-restore -c Release -m:1 -p:UseSharedCompilation=false`. Ran `dotnet test CashMovements.sln --no-build --no-restore -c Release -m:1` with detailed console and TRX loggers, `dotnet ef migrations has-pending-model-changes` against Infrastructure, and `.\tools\Verify-DatabaseSetup.ps1 -Port 14533`. The README includes a shorter Rider/PowerShell review path. Its optional manual `grpcurl` example was not executed. [Run the statement checks](README.md#stream-a-statement)
 
+**Candidate review (summary).** The candidate approved the streaming milestone and requested a final diff check against the tested version before commit and push. The instruction for repeat testing was explicit.
+
+> Rerun checks only where subsequent changes have invalidated the results.
+
 ## Step 5 verification
 
 On 18 November 2026 the candidate requested the console client and set its completion condition.
+
+> Consume the gRPC stream incrementally and write CSV without buffering the entire statement. Display progress and support cancellation.
 
 > Keep incomplete exports clearly marked as partial; only publish the completed filename after successful stream completion and file finalisation.
 
@@ -218,4 +257,77 @@ The assistant linked the existing protobuf into the console project with client-
 
 Each verification run used a disposable Compose project and removed its database container, network and volume. Local CSVs, partials, logs and TRX results are under the ignored `TestResults` directory. The README gives reproducible commands with output under `exports`. [Run the HTTPS example](README.md#export-a-statement-to-csv)
 
-**Step 5 review follow-up.** The candidate requested descriptive names for the four existing client exit codes. The assistant replaced the six literal returns with integer constants, documented their meanings in the README and added the naming convention to AGENTS.md. The Release solution build passed with zero warnings and errors. All seven existing CSV client integration cases passed against Docker SQL Server, retaining independent assertions on the numeric outcomes. Running the built client with no arguments also confirmed process exit code 2.
+**Step 5 review follow-up.** The candidate requested a readability change after reviewing the client.
+
+> Replace the console client's literal exit codes with descriptive named constants in ClientExitCodes.cs.
+
+**AI implementation and verification (summary).** The assistant replaced six literal returns with named constants, documented their meanings in the README and added the candidate's naming convention to AGENTS.md. The Release solution build passed with zero warnings and errors. All seven existing CSV client integration cases passed against Docker SQL Server, retaining independent assertions on the numeric outcomes. Running the built client with no arguments also confirmed process exit code 2. The candidate then approved the milestone for commit and push.
+
+## Final handoff rehearsal
+
+> Verify the README setup instructions from a clean checkout using an isolated database, preserving my existing local data.
+
+On 18 November 2026 the candidate asked for an audit against the original assessment, a clean-checkout rehearsal that preserved local data, and a review before publication. The assistant read the three-page brief and compared it with the checked-in service, client, tests and documents. At that point the candidate had yet to record the video and wanted to decide what to show and why. [Mandatory requirement checklist](IMPLEMENTATION_PLAN.md#9-mandatory-requirement-checklist) · [Subsequent recording script](DEMO_SCRIPT.md)
+
+| Rehearsal check | Observed result |
+|---|---|
+| Fresh checkout and environment | Cloned `master` directly from the private GitHub origin using the available authenticated account. The clean checkout contained 80 tracked files at `07d0c823d0d159fd3796803ea97dc0bcd3ca3858`, with no prior host build output. Used Windows, the installed SDK and the machine's existing NuGet cache. |
+| Restore and Release build | `dotnet --version` returned 8.0.428. `dotnet tool restore` restored EF 8.0.34. `dotnet restore CashMovements.sln` and the README's Release build succeeded for all seven projects with zero warnings and zero errors. |
+| Isolated database setup | Gave each rehearsal a new Compose project name, an unused loopback SQL port, a generated process-local password and a new volume. Verified `CashMovements` did not exist before setup. The base seed created four accounts and two postings, both migrations appeared in the history table, and the README's inspection query returned 12,249.5000 for `ACC-001`. Ran the optional large fixture before starting the host. |
+| Automated regression | Ran the README's `dotnet test CashMovements.sln --no-build -c Release` with a TRX logger. Both full runs passed 50 unit and 63 integration cases each, with zero failures and zero skips. The integration cases use real HTTP/2 and migrated SQL Server databases, including simultaneous inserts, backdated writes, large exports and cancellation. |
+| HTTPS host and client | Confirmed an existing trusted development certificate, then launched the README's Release host profile on `https://localhost:5001`. The console exported July and August in separate invocations. July produced 4,464,134 bytes and 50,001 ordered movements, with opening 100.00, first running balance 99.00 and closing 100.50. August contained only the column header and the two 100.50 summaries. |
+| Restart and preservation | Followed `docker compose down` with `up -d --wait db` on the same rehearsal project. SQL still held all 50,002 `ACC-DEMO` postings including the June opening, totalling 100.50. Removed the rehearsal containers, networks and volumes by their unique project names. The user's existing database and volumes were outside these operations. |
+| Schema and seed reproducibility | Ran `tools/Verify-DatabaseSetup.ps1` in its own disposable project. Both seed modes preserved existing rows on rerun. SQL enforced the constraints, an independent EF migration matched the scripted schema, and upgrading an initial ledger preserved its existing BHD posting. Regenerating the idempotent SQL to a separate file matched the checked-in script after normalising line endings. The verification clone's Git status remained clean. |
+
+The first ad hoc PowerShell CSV check read the record-type string inside a `switch` where it needed the full parsed row. After fixing the checker, the assistant verified every reference in the first file and repeated the export and checks against another fresh database. The shipped client and automated assertions required no changes.
+
+**Verification boundaries.** The optional manual `grpcurl` examples were not executed. The tool was absent, and automatic approval review declined downloading and executing an external binary solely for those examples. Generated-client integration tests exercised all three RPCs, and the standalone CSV utility called the running HTTPS host. The clean clone established repository availability to the authenticated account used for that rehearsal.
+
+**Documentation review.** The README now separates the setup/host terminal from the client terminal and explains the Docker project and port used to isolate a second copy. SOLUTION records the implemented field limits, the distinction between a submit reply and a balance query, and a direct link to the AI record. The record contains selected prompt excerpts, candidate-directed decisions and revisions, assistant contributions and the outcomes of checks actually run.
+
+**Recording plan review.** The candidate initially asked to explain the design and where DRY and SOLID influenced the code before demonstrating the running system. The assistant proposed tracing one submission through the layers and demonstrating its effects in a separate segment.
+
+> Lets re assess the plan for the video
+
+**Candidate revision and AI suggestion (summary).** After rereading the reviewers’ guidance, the candidate asked to reassess the emphasis on a code walkthrough. The assistant proposed a seven-minute outline pairing implementation decisions with observable results, including a segment on the measured index change. The candidate subsequently specified the live Postman requests and CSV inspection to include in the demonstration.
+
+## Final Rider regression
+
+On 19 November 2026 the candidate requested a full run of the final application and a hands-on walkthrough in Rider. The assistant rebuilt the working tree at `07d0c82` with the pending documentation edits. The API and standalone CLI ran on loopback HTTPS against a separate Docker SQL Server. The assistant used separate probe accounts for writes so that the candidate could start with the empty seeded ZAR account.
+
+| Check | Observed result |
+|---|---|
+| Build and regression suite | .NET SDK 8.0.428. A non-incremental Release build of all seven projects finished with zero warnings and errors. EF reported no pending model changes. All 50 unit and 63 SQL integration cases passed, with zero skips. |
+| Database setup | The separate database verifier passed clean creation, schema/EF comparison, constraint checks, upgrade with existing data, and idempotent base and 50,001-movement seed reruns. It removed its own containers and volume. |
+| Live gRPC requests | A generated client parsed and sent the 13 request bodies prepared for Rider, substituting an isolated write account and run ID. Recording, equivalent retries, typed conflicts, currency and precision failures, reuse of an invalid submission's reference, missing accounts, date boundaries and an empty statement matched expectations. An additional 12 overlapping identical requests yielded one `Recorded`, eleven `AlreadyRecorded` and one balance effect. Retrying with visually identical but ordinally different Unicode narration yielded `Conflict` and preserved the original. The IDE's request editor was left for the candidate's interactive check. |
+| Standalone CSV and cancellation | A separate CSV parser checked all eight fields of all 50,001 July movements. The statement opened at 100.00 and closed at 100.50. August had zero movements and both summaries were 100.50. A competing existing output retained its bytes. Invalid arguments exited 2, a missing account exited 1, and an actual Windows Ctrl+C exited 130 with 664 movements in the partial file and no closing record or completed filename. The cancellation count is timing-dependent. |
+| Reproduced reporting limit | On a separate ZAR account, a 1.00 posting one tick before the largest UTC instant and a 2.00 posting at the largest instant produced a current balance of 3.00. The latest legal one-tick statement reported only the 1.00 movement. An end beyond the maximum tick failed timestamp validation. This is a limitation of accepting the final instant while requiring an exclusive end on every statement. |
+
+## Busy account in the default seed
+
+**Candidate decision (summary).** A busy account is an expected workload. The reviewer should be able to stream its statement before or after the small example immediately after setup.
+
+**Implementation.** The assistant included the existing July fixture in the default initializer and added both independent `ExportStatement` requests to the README. The earlier `large-demo` command still works. [Initializer](db/init.sh) · [Statement examples](README.md#stream-a-statement)
+
+**Verification.** With a fresh Docker SQL Server volume, one default initialization prepared both statements. The Release gRPC service and CSV client streamed July for `ACC-DEMO` first (50,001 movements, opening 100.00 ZAR, closing 100.50 ZAR), then 16 July for `ACC-001` (one movement, opening 12,500.00 ZAR, closing 12,249.50 ZAR).
+
+The database verifier found five accounts and 50,004 movements immediately after the default seed. After it inserted an extra posting, it reran both setup commands and checked that the hashes of all accounts, movements and migration history stayed identical. [Database setup verifier](tools/Verify-DatabaseSetup.ps1)
+
+## Recording readiness
+
+On 19 November 2026 the candidate confirmed the manual workflow.
+
+> I’ve manually verified the workflow and am happy that it works as intended.
+
+| Item | Evidence available for the recording |
+|---|---|
+| Manual demonstration | The candidate chose a live starting balance on `ACC-ZAR`, a fresh reference, an identical retry and then a changed amount. The script uses the two-connection test to explain what sequential clicks cannot demonstrate. [Postman and concurrency cues](DEMO_SCRIPT.md) |
+| Statement sizes | The candidate chose a two-minute Postman preview after the full-month request exhausted Postman’s memory. The assistant used the CSV client to verify that the same preview streamed 120 movements, opening and closing at 100.00 ZAR. The full July CSV was independently checked for 50,001 movements, 100.00 opening, 99.00 after the first debit and 100.50 closing. [Statement examples](README.md#stream-a-statement) |
+| Test setup | The assistant ran the README’s PowerShell command `dotnet test CashMovements.sln -c Release` against Docker SQL Server. All 50 unit and 63 integration tests passed, with zero skips. The reviewer instructions also cover an IDE’s test run configuration. [Test setup](README.md#tests-and-design-notes) |
+| Recording script | The assistant checked the seven segment times, file and heading links, Postman message templates and PowerShell syntax. The two CSV inspection commands were checked against the candidate’s existing July export. The 8:10 total is the planned runtime. [OBS script and sign-off](DEMO_SCRIPT.md#video-sign-off) |
+
+**Candidate feedback and revision (summary).** On rereading the recording instructions, the candidate questioned whether the walkthrough explained enough of the reasoning. The assistant added the lost-reply and backdated-posting examples. The snapshot example distinguishes a hypothetical mixed closing of 77.00 from the observed closings of 70.00 and 97.00. The index example uses the recorded query plans to explain a design change and its write cost. [Verification evidence](#step-4-verification)
+
+**Second take (summary).** The candidate chose to explain DRY and SOLID in the code first, demonstrate the outcomes briefly, and reuse earlier footage if it covered SOLUTION.md and AI assistance. The assistant reorganised the cues around the shared retry comparison, the store interface owned by UseCases, the API’s error mapping and the SQL snapshot. The cue sheet placed the cut after the July CSV closing balance. [Recording cues](DEMO_SCRIPT.md)
+
+**Final recording, 19 November 2026.** The candidate confirmed the MP4 was saved and requested its publication. The assistant linked it at the start of the README and checked the file metadata. The recording has 1080p video, stereo audio and a duration of 10:00.083. Reviewer-account playback has not been independently verified. [Assessment video](Assessment.mp4)

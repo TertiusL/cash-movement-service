@@ -103,7 +103,7 @@ try {
     Invoke-Database @'
 IF (SELECT snapshot_isolation_state FROM sys.databases WHERE database_id=DB_ID()) <> 1
     THROW 51002, 'Snapshot isolation is disabled.', 1;
-IF (SELECT COUNT(*) FROM dbo.Accounts) <> 4 OR (SELECT COUNT(*) FROM dbo.Movements) <> 2 OR
+IF (SELECT COUNT(*) FROM dbo.Accounts) <> 5 OR (SELECT COUNT(*) FROM dbo.Movements) <> 50004 OR
    (SELECT COUNT(*) FROM dbo.__EFMigrationsHistory
     WHERE MigrationId IN (N'20261118113139_InitialLedger', N'20261118135539_CoverStatementIndex')) <> 2 OR
    NOT EXISTS (SELECT 1 FROM dbo.Accounts WHERE AccountId=N'ACC-JPY' AND Currency=N'JPY') OR
@@ -112,6 +112,12 @@ IF (SELECT COUNT(*) FROM dbo.Accounts) <> 4 OR (SELECT COUNT(*) FROM dbo.Movemen
    NOT EXISTS (SELECT 1 FROM dbo.Movements WHERE AccountId=N'ACC-001' AND Currency=N'ZAR'
                GROUP BY AccountId HAVING COUNT(*)=2 AND SUM(Amount)=12249.50)
     THROW 51003, 'Unexpected baseline fixture.', 1;
+IF NOT EXISTS (SELECT 1 FROM dbo.Accounts WHERE AccountId=N'ACC-DEMO' AND Currency=N'ZAR') OR
+   NOT EXISTS (SELECT 1 FROM dbo.Movements WHERE AccountId=N'ACC-DEMO' AND OccurredAtUtc<'2024-07-01'
+               HAVING COUNT_BIG(*)=1 AND SUM(Amount)=100.00) OR
+   NOT EXISTS (SELECT 1 FROM dbo.Movements WHERE AccountId=N'ACC-DEMO' AND OccurredAtUtc>='2024-07-01' AND OccurredAtUtc<'2024-08-01'
+               HAVING COUNT_BIG(*)=50001 AND SUM(Amount)=0.50)
+    THROW 51004, 'Unexpected busy-account statement fixture in the default seed.', 1;
 IF (SELECT COUNT(*) FROM sys.indexes AS i
     JOIN sys.index_columns AS ic ON ic.object_id=i.object_id AND ic.index_id=i.index_id
     JOIN sys.columns AS c ON c.object_id=ic.object_id AND c.column_id=ic.column_id
@@ -121,8 +127,10 @@ IF (SELECT COUNT(*) FROM sys.indexes AS i
 INSERT INTO dbo.Movements(AccountId, ExternalRef, Currency, Amount, OccurredAtUtc, Narration)
 VALUES(N'ACC-ZAR', N'VERIFY/SENTINEL', N'ZAR', 37.25, '2024-11-01T12:00:00.1234567', N'Preserve this posting.');
 '@
-    Write-Host 'PASS: clean database, snapshot isolation, both migrations, covering statement index, four accounts and two seeded movements.'
+    Write-Host 'PASS: default setup created five accounts and 50,004 movements, with snapshot isolation, both migrations and a covering statement index.'
+    Write-Host 'PASS: ACC-001 balance R12,249.50. ACC-DEMO July statement has 50,001 movements, R100.00 opening and R100.50 closing.'
     Test-Rerun setup
+    Test-Rerun large-demo
 
     Invoke-Database @'
 SET XACT_ABORT OFF;
@@ -186,16 +194,6 @@ VALUES(N'UPGRADE/01', N'EXISTING/01', N'BHD', -12.345, '2024-07-01T00:00:00.1234
     }
     Write-Host 'PASS: upgrading an existing initial ledger preserved every account and movement field and produced the current schema.'
 
-    Invoke-Compose @('run', '--rm', 'db-init', 'large-demo') | Out-Null
-    Invoke-Database @'
-IF NOT EXISTS (SELECT 1 FROM dbo.Movements WHERE AccountId=N'ACC-DEMO' AND OccurredAtUtc<'2024-07-01'
-               HAVING COUNT_BIG(*)=1 AND SUM(Amount)=100.00) OR
-   NOT EXISTS (SELECT 1 FROM dbo.Movements WHERE AccountId=N'ACC-DEMO' AND OccurredAtUtc>='2024-07-01' AND OccurredAtUtc<'2024-08-01'
-               HAVING COUNT_BIG(*)=50001 AND SUM(Amount)=0.50)
-    THROW 51004, 'Unexpected large statement fixture.', 1;
-'@
-    Write-Host 'PASS: 50,001 July movements, R100.00 opening and R100.50 closing.'
-    Test-Rerun large-demo
 }
 finally {
     try {
